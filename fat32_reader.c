@@ -1,11 +1,9 @@
 /***********************************************************
- * TODO: Fill in this area and delete this line
- * Name of program:
- * Authors:
- * Description:
+ * Name of program: fat32_reader
+ * Authors: Andrew Kaplan
+ * Description: A Linux interpreter for the Fat 32 file system
  **********************************************************/
 
-/* These are the included libraries.  You may need to add more. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +28,6 @@ int main(int argc, char *argv[])
 {
 	char cmd_line[MAX_CMD];
 
-
 	/* Parse args and open our image file */
 
 	/* Parse boot sector and get information */
@@ -45,7 +42,8 @@ int main(int argc, char *argv[])
 	while(True) {
 		bzero(cmd_line, MAX_CMD);
 		printf("/]");
-		fgets(cmd_line,MAX_CMD,stdin);
+		if(!fgets(cmd_line,MAX_CMD,stdin))
+			fprintf(stderr, "error using fgets");
 
 		/* Start comparing input */
 		if(strncmp(cmd_line,"info",4)==0) {
