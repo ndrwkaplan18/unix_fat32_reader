@@ -219,12 +219,12 @@ int main(int argc, char *argv[])
 
 		/* Start comparing input */
 		if(strncmp(cmd_line,"info",4)==0) {
-			printf("Going to display info.\n");
+			// printf("Going to display info.\n");
 			info();
 		}
 
 		else if(strncmp(cmd_line,"stat",4)==0){
-			printf("Going to display stat.\n");
+			// printf("Going to display stat.\n");
 			display_stat(cmd_line);
 		}
 
