@@ -82,7 +82,8 @@ void display_stat(char *name){
 	}
 	char input[13];
 	int i = 0, j = 0;
-	while(name[i+5] != 0x00){
+	// every string will have a \n as its last character
+	while(name[i+5] != 0xA){
 		if(i > 11){
 			printf("Error: file/directory name cannot exceed 12 characters\n");
 			return;
@@ -90,7 +91,7 @@ void display_stat(char *name){
 		input[i] = name[i+5];
 		i++;
 	}
-	input[i] = 0;
+	input[i] = 0x00;
 	printf("%s\n",input);
 
 	char first[9];
@@ -102,6 +103,7 @@ void display_stat(char *name){
 		i++;
 	}
 	first[i] = 0;
+	// If the loop terminated because the null character was reached, there is no file extension
 	if(input[i] == 0){
 		last[0] = 0;
 	}
@@ -113,7 +115,6 @@ void display_stat(char *name){
 		}
 		last[j] = 0;
 	}
-	// Null terminate first and advance the index past the period
 	printf("first: %s | last: %s\n",first, last);
 
 
