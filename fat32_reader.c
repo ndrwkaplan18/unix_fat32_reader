@@ -56,6 +56,7 @@ void parse_boot_sector();
 unsigned int read_attr(int fd, off_t offset, int size);
 void info();
 void display_stat(char *name);
+void show_stat(off_t offset);
 void display_ls();
 char * get_file_attr_type(unsigned char attr);
 int is_valid_attr(unsigned char attr);
@@ -73,15 +74,12 @@ void info(){
 }
 
 void display_stat(char *name){
-	// Parse 2nd argument of command
-	// Split string into first 8 chars and last 3 chars
-	// Compare both components to each valid directory entry in pwd
 	if(name[4] != 0x20){ // Expected input "stat arg" so the space should be at index 4
 		printf("Error: unable to parse args\n");
 		return;
 	}
 	char input[13];
-	int i = 0, j = 0;
+	int i = 0, j, k, first_len, last_len;
 	// every string will have a \n as its last character
 	while(name[i+5] != 0xA){
 		if(i > 11){
@@ -89,11 +87,15 @@ void display_stat(char *name){
 			return;
 		}
 		input[i] = name[i+5];
+		// If lowercase, convert to uppercase
+		if(input[i] >= 0x61 && input[i] <= 0x7A){
+			input[i] = input[i] - 0x20;
+		}
 		i++;
 	}
-	input[i] = 0x00;
-	printf("%s\n",input);
+	input[i] = 0;
 
+	// Split string into first 8 chars and last 3 chars
 	char first[9];
 	char last[4];
 	i = 0;
@@ -109,32 +111,63 @@ void display_stat(char *name){
 	}
 	else{
 		i++;
+		j = 0;
 		while(input[i] != 0){
 			last[j++] = input[i];
 			i++;
 		}
 		last[j] = 0;
 	}
-	printf("first: %s | last: %s\n",first, last);
 
+	// Compare both components to each valid directory entry in pwd
+	fatinfo_t *fi = &fat_info;
+	pwd_t *wd = &pwd;
+	char buff[12], comp_first[9], comp_last[4];
+	off_t offset;
+	i = j = k = 0;
+	while(True){
+		offset = wd->offset + 32 * i++;
+		lseek(fi->img_fd, offset, SEEK_SET); // Advance 1 directory entry
+		if(read(fi->img_fd, buff, 12) < 0) perror("failed to read file"); // Read 11 name bytes + 1 attr byte
+		if(buff[0] == 0x00) break;
+		if(buff[0] == 0xE5 || !is_valid_attr(buff[11]) || buff[11] == ATTR_LONG_NAME) continue;
+		// This part is to isolate the first 8 and last 3 bytes of the 11 name bytes and eliminate any trailing spaces
+		k = 3;
+		comp_last[k--] = 0;
+		for(j = 10; j >= 7; j--) comp_last[k--] = (buff[j] == 0x20) ? 0 : buff[j];
+		k = 7;
+		comp_first[k--] = 0;
+		for(; j >= 0; j--) comp_first[k--] = (buff[j] == 0x20) ? 0 : buff[j];
+		// find the length of the comp strings
+		j = k = first_len = last_len = 0;
+		while(comp_first[j++] != 0) first_len++;
+		while(comp_last[k++] != 0) last_len++;
+		if(comp_last[0] == 0){
+			if(!strncmp(first, comp_first, first_len)){
+				show_stat(offset);
+				return;
+			}
+		}
+		else{
+			if(!strncmp(first, comp_first, first_len) && !strncmp(last, comp_last, last_len)){
+				show_stat(offset);
+				return;
+			}
+		}
 
+	}
+	printf("Error: file/directory does not exist\n");
+}
 
-	// fatinfo_t *fi = &fat_info;
-	// pwd_t *wd = &pwd;
-	// unsigned char dir_name[8];
-	// unsigned char attr;
-	// unsigned short first_clust;
-	// unsigned int file_size;
-	// lseek(fi->img_fd, wd->offset, SEEK_SET);
-	// if(read(fi->img_fd, dir_name, 8) < 0) perror("failed to read file");
-	// attr = read_attr(fi->img_fd, wd->offset + 11, 1);
-	// first_clust = read_attr(fi->img_fd, wd->offset + 26, 2);
-	// file_size = read_attr(fi->img_fd, wd->offset + 28, 4);
-	// printf("Name is %s\n", dir_name);
-	// printf("Size is %d\n",file_size);
-	// printf("Attributes %s\n", get_file_attr_type(attr));
-	// printf("Next cluster number is 0x%x\n", first_clust);
-
+void show_stat(off_t offset){
+	fatinfo_t *fi = &fat_info;
+	int size, hi, lo, cluster, attr;
+	size = read_attr(fi->img_fd, offset+28, 4);
+	hi = read_attr(fi->img_fd, offset+20, 2);
+	lo = read_attr(fi->img_fd, offset+26, 2);
+	attr = read_attr(fi->img_fd, offset+11, 1);
+	cluster = (hi << 2) | lo;
+	printf("Size is %d\nAttributes %s\nNext cluster number is 0x%x\n",size, get_file_attr_type(attr), cluster);
 }
 
 void display_ls(){
