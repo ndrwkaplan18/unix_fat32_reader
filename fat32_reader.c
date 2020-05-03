@@ -59,7 +59,6 @@ void display_stat(char *name);
 void display_ls();
 char * get_file_attr_type(unsigned char attr);
 int is_valid_attr(unsigned char attr);
-// void ls();
 
 void info(){
 	fatinfo_t *fi = &fat_info;
@@ -74,21 +73,67 @@ void info(){
 }
 
 void display_stat(char *name){
-	fatinfo_t *fi = &fat_info;
-	pwd_t *wd = &pwd;
-	unsigned char dir_name[8];
-	unsigned char attr;
-	unsigned short first_clust;
-	unsigned int file_size;
-	lseek(fi->img_fd, wd->offset, SEEK_SET);
-	if(read(fi->img_fd, dir_name, 8) < 0) perror("failed to read file");
-	attr = read_attr(fi->img_fd, wd->offset + 11, 1);
-	first_clust = read_attr(fi->img_fd, wd->offset + 26, 2);
-	file_size = read_attr(fi->img_fd, wd->offset + 28, 4);
-	printf("Name is %s\n", dir_name);
-	printf("Size is %d\n",file_size);
-	printf("Attributes %s\n", get_file_attr_type(attr));
-	printf("Next cluster number is 0x%x\n", first_clust);
+	// Parse 2nd argument of command
+	// Split string into first 8 chars and last 3 chars
+	// Compare both components to each valid directory entry in pwd
+	if(name[4] != 0x20){ // Expected input "stat arg" so the space should be at index 4
+		printf("Error: unable to parse args\n");
+		return;
+	}
+	char input[13];
+	int i = 0, j = 0;
+	while(name[i+5] != 0x00){
+		if(i > 11){
+			printf("Error: file/directory name cannot exceed 12 characters\n");
+			return;
+		}
+		input[i] = name[i+5];
+		i++;
+	}
+	input[i] = 0;
+	printf("%s\n",input);
+
+	char first[9];
+	char last[4];
+	i = 0;
+	// Read input up to the period to be recorded in first
+	while(input[i] != 0 && input[i] != 0x2E){
+		first[i] = input[i];
+		i++;
+	}
+	first[i] = 0;
+	if(input[i] == 0){
+		last[0] = 0;
+	}
+	else{
+		i++;
+		while(input[i] != 0){
+			last[j++] = input[i];
+			i++;
+		}
+		last[j] = 0;
+	}
+	// Null terminate first and advance the index past the period
+	printf("first: %s | last: %s\n",first, last);
+
+
+
+	// fatinfo_t *fi = &fat_info;
+	// pwd_t *wd = &pwd;
+	// unsigned char dir_name[8];
+	// unsigned char attr;
+	// unsigned short first_clust;
+	// unsigned int file_size;
+	// lseek(fi->img_fd, wd->offset, SEEK_SET);
+	// if(read(fi->img_fd, dir_name, 8) < 0) perror("failed to read file");
+	// attr = read_attr(fi->img_fd, wd->offset + 11, 1);
+	// first_clust = read_attr(fi->img_fd, wd->offset + 26, 2);
+	// file_size = read_attr(fi->img_fd, wd->offset + 28, 4);
+	// printf("Name is %s\n", dir_name);
+	// printf("Size is %d\n",file_size);
+	// printf("Attributes %s\n", get_file_attr_type(attr));
+	// printf("Next cluster number is 0x%x\n", first_clust);
+
 }
 
 void display_ls(){
@@ -98,7 +143,7 @@ void display_ls(){
 	unsigned char first[9];
 	unsigned char last[4];
 	int i = 1, j, k;
-	do {
+	while(True){
 		lseek(fi->img_fd, wd->offset + 32 * i++, SEEK_SET); // Advance 1 directory entry
 		if(read(fi->img_fd, buff, 12) < 0) perror("failed to read file"); // Read 11 name bytes + 1 attr byte
 		if(buff[0] == 0x00) break;
@@ -112,7 +157,7 @@ void display_ls(){
 		for(; j >= 0; j--) first[k--] = (buff[j] == 0x20) ? 0 : buff[j];
 		if(last[0] == 0) printf("%s\t",first);
 		else printf("%s.%s\t",first, last);
-	} while(True);
+	}
 	printf("\n");
 }
 
