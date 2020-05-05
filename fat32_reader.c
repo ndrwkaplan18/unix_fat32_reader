@@ -16,6 +16,7 @@
 	#include <fcntl.h>
 	#include <stdint.h>
 	#include <unistd.h>
+	#include <ctype.h>
 /********************************************************************************************/
 /* DEFINES */
 /********************************************************************************************/
@@ -49,11 +50,15 @@
 		unsigned char BPB_NumFATs;
 		unsigned int BPB_FATSz32;
 		unsigned int BPB_RootClus;
+		unsigned int FirstDataSector;
+		unsigned int *FAT_table;
 		off_t fat_offset;
 	} fatinfo_t;
 
 	typedef struct {
 		off_t offset;
+		off_t root_offset;
+		unsigned char *sector;
 	} pwd_t;
 
 	typedef struct {
@@ -77,12 +82,14 @@
 /* FUNCTION DECLARATIONS */
 /********************************************************************************************/
 	/* MAIN FUNCTIONS */
-		void info();
-		void display_stat(char *name);
+		void display_info();
 		void display_ls();
+		void display_stat(char *name, char only_size);
+		void display_size(char *name);
+		void display_volume();
 	/* HELPER FUNCTIONS */
-		void read_entry(entry_t *entry, off_t offset);
-		unsigned int read_attr(int fd, off_t offset, int size);
+		void read_entry(entry_t *entry, unsigned char *buff, int index);
+		static unsigned int readLittleEnd(unsigned char *buffer, int index, int size);
 		void get_fullname(char *first, char *last, char *output);
 		void split_into_first_and_last(char *input, char *first, char *last);
 		void parse_filename_input(char *input, char *output);
@@ -94,16 +101,35 @@
 /********************************************************************************************/
 /* MAIN FUNCTIONS */
 /********************************************************************************************/
-	void info(){
+	void display_info(){
 		fatinfo_t *fi = &fat_info;
 		fprintf(stdout, "BPB_BytsPerSec is 0x%x, %d\n", fi->BPB_BytsPerSec, fi->BPB_BytsPerSec);
 		fprintf(stdout, "BPB_SecPerClus is 0x%x, %d\n", fi->BPB_SecPerClus, fi->BPB_SecPerClus);
 		fprintf(stdout, "BPB_RsvdSecCnt is 0x%x, %d\n", fi->BPB_RsvdSecCnt, fi->BPB_RsvdSecCnt);
 		fprintf(stdout, "BPB_NumFATs is 0x%x, %d\n", fi->BPB_NumFATs, fi->BPB_NumFATs);
 		fprintf(stdout, "BPB_FATSz32 is 0x%x, %d\n", fi->BPB_FATSz32, fi->BPB_FATSz32);
+		// debugging fprintfs
+		fprintf(stdout, "BPB_RootClus is 0x%x, %d\n", fi->BPB_RootClus, fi->BPB_RootClus);
+		fprintf(stdout, "FirstDataSector is %x, %d\n", fi->FirstDataSector, fi->FirstDataSector);
+		fprintf(stdout, "FatOffset is %lx, %ld\n", fi->fat_offset, fi->fat_offset);
+		fprintf(stdout, "RootOffset is %lx, %ld\n", pwd.root_offset, pwd.root_offset);
 	}
 
-	void display_stat(char *name){
+	void display_ls(){
+		pwd_t *wd = &pwd;
+		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
+		int i = 1;
+		while(True){
+			read_entry(entry, wd->sector, 32 * i++);
+			if(entry->attr == ENTRY_IS_LAST) break;
+			if(entry->attr == ENTRY_INVALID) continue;
+			fprintf(stdout, "%s\t", entry->full_name);
+		}
+		printf("\n");
+		free(entry);
+	}
+
+	void display_stat(char *name, char only_size){
 		if(name[4] != 0x20){ // Expected input "stat arg" so the space should be at index 4
 			fprintf(stderr, "Error: unable to parse args\n");
 			return;
@@ -115,11 +141,12 @@
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
 		int i = 0;
 		while(True){
-			read_entry(entry, wd->offset + 32 * i++);
+			read_entry(entry, wd->sector,32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr == ENTRY_INVALID) continue;
 			if(!strncmp(input, entry->full_name, entry->full_len)){
-				fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x\n",entry->size, get_file_attr_type(entry->attr), entry->next_clust);
+				if(!only_size) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x\n",entry->size, get_file_attr_type(entry->attr), entry->next_clust);
+				else fprintf(stdout, "Size is %d\n", entry->size);
 				free(entry);
 				return;
 			}
@@ -128,17 +155,16 @@
 		free(entry);
 	}
 
-	void display_ls(){
-		pwd_t *wd = &pwd;
+	void display_size(char *name){
+		display_stat(name, True);
+	}
+
+	void display_volume(){
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		int i = 1;
-		while(True){
-			read_entry(entry, wd->offset + 32 * i++);
-			if(entry->attr == ENTRY_IS_LAST) break;
-			if(entry->attr == ENTRY_INVALID) continue;
-			fprintf(stdout, "%s\t", entry->full_name);
-		}
-		printf("\n");
+		pwd_t *wd = &pwd;
+		read_entry(entry, wd->sector, 0);
+		if(entry->first_len > 0) fprintf(stdout, "%s%s\n",entry->first, entry->last);
+		else fprintf(stderr, "Error: volume name not found");
 		free(entry);
 	}
 /********************************************************************************************/
@@ -150,55 +176,81 @@
 	 * field is filled. The caller must check if the attr field is valid before checking other
 	 * fields in the entry_t struct.
 	*/
-	void read_entry(entry_t *entry, off_t offset){
-		fatinfo_t *fi = &fat_info;
-		char buff[12];
-		lseek(fi->img_fd, offset, SEEK_SET);
-		if(read(fi->img_fd, buff, 12) < 0) fprintf(stderr, "failed to read file");
-		if(buff[0] == 0x00){
+	void read_entry(entry_t *entry, unsigned char *buff, int index){
+		if(buff[index] == 0x00){
 			entry->attr = ENTRY_IS_LAST;
 			return;
 		}
-		if(buff[0] == 0xE5 || !is_valid_attr(buff[11]) || buff[11] == ATTR_LONG_NAME){
+		if(buff[index] == 0xE5 || !is_valid_attr(buff[index+11]) || buff[index+11] == ATTR_LONG_NAME){
 			entry->attr = ENTRY_INVALID;
 			return;
 		}
-		int k, j;
+		int i, j;
 		// I can't guarantee there are no leftovers from a previous entry, so I need to zero out fullname every time :/
-		for(k = 0; k < 13; k++) entry->full_name[k] = 0;
-		k = 3;
-		entry->last[k--] = 0;
-		for(j = 10; j >= 7; j--) entry->last[k--] = (buff[j] == 0x20) ? 0 : buff[j];
-		k = 7;
-		entry->first[k--] = 0;
-		for(; j >= 0; j--) entry->first[k--] = (buff[j] == 0x20) ? 0 : buff[j];
-		// find the length of the comp strings
-		j = k = entry->first_len = entry->last_len = 0;
-		while(entry->first[j++] != 0) entry->first_len++;
-		while(entry->last[k++] != 0) entry->last_len++;
+		for(i = 0; i < 13; i++) entry->full_name[i] = 0;
+		// Next two for loops copy the two components of name
+		for(i = 0; i < 8; i++){
+			if(buff[index+i] == 0x20){
+				entry->first[i] = 0;
+				entry->first_len = i;
+				break;
+			}
+			entry->first[i] = buff[index+i];
+		}
+		j = 0;
+		for(i = 8; i < 11; i++){
+			if(buff[index+i] == 0x20){
+				entry->last[j] = 0;
+				entry->last_len = j;
+				break;
+			}
+			entry->last[j++] = buff[index+i];
+		}
 
 		int hi, lo;
 		get_fullname(entry->first, entry->last, entry->full_name);
 		entry->full_len = (entry->last_len) ? entry->first_len : entry->first_len + entry->last_len + 1;
-		entry->size = read_attr(fi->img_fd, offset+28, 4);
-		hi = read_attr(fi->img_fd, offset+20, 2);
-		lo = read_attr(fi->img_fd, offset+26, 2);
-		entry->attr = read_attr(fi->img_fd, offset+11, 1);
-		entry->next_clust = (hi << 2) | lo;
+		entry->size = readLittleEnd(buff, index+28, 4);
+		hi = readLittleEnd(buff, index+20, 2);
+		lo = readLittleEnd(buff, index+26, 2);
+		entry->attr = readLittleEnd(buff, index+11, 1);
+		entry->next_clust = (hi << 16) | lo;
 	}
 
-	/** 
-	 * Read an attribute of given size in endian neutral way
-	*/
-	unsigned int read_attr(int fd, off_t offset, int size){
-		unsigned int ret;
-		int i;
-		unsigned char buffer[size];
-		lseek(fd, offset, SEEK_SET);
-		if(read(fd, buffer, size) < 0) fprintf(stderr, "failed to read file");
-		ret = buffer[0];
+	unsigned char * read_sector(off_t offset){
+		fatinfo_t *fi = &fat_info;
+		unsigned char *sector = malloc(sizeof(unsigned char) * fi->BPB_BytsPerSec);
+		lseek(fi->img_fd, offset, SEEK_SET);
+		if(read(fi->img_fd, sector, fi->BPB_BytsPerSec) < 0) fprintf(stderr, "failed to read file");
+		return sector;
+	}
+
+	void read_fat(){
+		fatinfo_t *fi = &fat_info;
+		unsigned int size = fi->BPB_FATSz32 * fi->BPB_BytsPerSec;
+		int length = size / sizeof(unsigned int), UIntsPerSec = fi->BPB_BytsPerSec / sizeof(unsigned int);
+		unsigned char * sector = malloc(fi->BPB_BytsPerSec);
+		int i, j = 0;
+		fi->FAT_table = (unsigned int *) malloc(size);
+		/* 
+		This is ugly, I know. I only want to have 1 sector in memory at a time so this monstrosity is the result.
+		If i = 0 or some multiple of UnsignedIntsPerSec, read in the next cluster. j tracks which cluster to add.
+		We determine which index to read the same way as determining which sector.
+		*/
+		for(i = 0; i < length; i++){
+			if(i % UIntsPerSec == 0){
+				sector = read_sector(fi->fat_offset + fi->BPB_BytsPerSec * j++);
+			}
+			fi->FAT_table[i] = readLittleEnd(sector, (i * 4) % fi->BPB_BytsPerSec, sizeof(unsigned int));
+		}
+		free(sector);
+	}
+
+	static unsigned int readLittleEnd(unsigned char *buffer, int index, int size){
+		unsigned int ret, i;
+		ret = buffer[index];
 		for(i = 1; i < size; i++){
-			ret += buffer[i] << (8 * i);
+			ret += buffer[index + i] << (8 * i);
 		}
 		return ret;
 	}
@@ -257,9 +309,7 @@
 			}
 			output[i] = input[i+5];
 			// If lowercase, convert to uppercase
-			if(output[i] >= 0x61 && output[i] <= 0x7A){
-				output[i] = output[i] - 0x20;
-			}
+			output[i] = toupper(output[i]);
 			i++;
 		}
 		output[i] = 0;
@@ -308,14 +358,21 @@
 	void parse_boot_sector(){
 		fatinfo_t *fi = &fat_info;
 		pwd_t *wd = &pwd;
-		fi->BPB_BytsPerSec = read_attr(fi->img_fd, BPB_BytsPerSec_offset, sizeof(fi->BPB_BytsPerSec));
-		fi->BPB_SecPerClus = read_attr(fi->img_fd, BPB_SecPerClus_offset, sizeof(fi->BPB_SecPerClus));
-		fi->BPB_RsvdSecCnt = read_attr(fi->img_fd, BPB_RsvdSecCnt_offset, sizeof(fi->BPB_RsvdSecCnt));
-		fi->BPB_NumFATs = read_attr(fi->img_fd, BPB_NumFATs_offset, sizeof(fi->BPB_NumFATs));
-		fi->BPB_FATSz32 = read_attr(fi->img_fd, BPB_FATSz32_offset, sizeof(fi->BPB_FATSz32));
-		fi->BPB_RootClus = read_attr(fi->img_fd, BPB_RootClus_offset, sizeof(fi->BPB_RootClus));
+		unsigned char *boot_sector = malloc(sizeof(unsigned char) * 90);
+		lseek(fi->img_fd, (off_t) 0, SEEK_SET);
+		if(read(fi->img_fd, boot_sector, 90) < 0) fprintf(stderr, "failed to read file");
+		fi->BPB_BytsPerSec = readLittleEnd(boot_sector, BPB_BytsPerSec_offset, sizeof(fi->BPB_BytsPerSec));
+		fi->BPB_SecPerClus = readLittleEnd(boot_sector, BPB_SecPerClus_offset, sizeof(fi->BPB_SecPerClus));
+		fi->BPB_RsvdSecCnt = readLittleEnd(boot_sector, BPB_RsvdSecCnt_offset, sizeof(fi->BPB_RsvdSecCnt));
+		fi->BPB_NumFATs = readLittleEnd(boot_sector, BPB_NumFATs_offset, sizeof(fi->BPB_NumFATs));
+		fi->BPB_FATSz32 = readLittleEnd(boot_sector, BPB_FATSz32_offset, sizeof(fi->BPB_FATSz32));
+		fi->BPB_RootClus = readLittleEnd(boot_sector, BPB_RootClus_offset, sizeof(fi->BPB_RootClus));
 		fi->fat_offset = fi->BPB_RsvdSecCnt * fi->BPB_BytsPerSec;
-		wd->offset = (fi->BPB_RsvdSecCnt + fi->BPB_NumFATs * fi->BPB_FATSz32) * fi->BPB_BytsPerSec;
+		fi->FirstDataSector = fi->BPB_RsvdSecCnt + fi->BPB_NumFATs * fi->BPB_FATSz32;
+		read_fat();
+		wd->offset = fi->FirstDataSector * fi->BPB_BytsPerSec;
+		wd->root_offset = wd->offset;
+		wd->sector = read_sector(fi->FirstDataSector * fi->BPB_BytsPerSec);
 	}
 
 	void open_img(char *filename){
@@ -333,21 +390,13 @@
 /********************************************************************************************/
 /* MAIN */
 /********************************************************************************************/
-	int main(int argc, char *argv[])
-	{
+	int main(int argc, char *argv[]){
 		char cmd_line[MAX_CMD];
-
 		/* Parse args and open our image file */
 		open_img(argv[1]);
 		/* Parse boot sector and get information */
 		parse_boot_sector();
 		/* Get root directory address */
-		//printf("Root addr is 0x%x\n", root_addr);
-
-
-		/* Main loop.  You probably want to create a helper function
-		for each command besides quit. */
-
 		while(True) {
 			bzero(cmd_line, MAX_CMD);
 			printf("/]");
@@ -357,24 +406,21 @@
 			/* Start comparing input */
 			if(strncmp(cmd_line,"info",4)==0) {
 				// printf("Going to display info.\n");
-				info();
+				display_info();
 			}
 
 			else if(strncmp(cmd_line,"stat",4)==0){
 				// printf("Going to display stat.\n");
-				display_stat(cmd_line);
-			}
-
-			else if(strncmp(cmd_line,"open",4)==0) {
-				printf("Going to open!\n");
-			}
-
-			else if(strncmp(cmd_line,"close",5)==0) {
-				printf("Going to close!\n");
+				display_stat(cmd_line, False);
 			}
 			
 			else if(strncmp(cmd_line,"size",4)==0) {
-				printf("Going to size!\n");
+				// printf("Going to size!\n");
+				display_size(cmd_line);
+			}
+
+			else if(strncmp(cmd_line,"volume",6)==0){
+				display_volume();
 			}
 
 			else if(strncmp(cmd_line,"cd",2)==0) {
