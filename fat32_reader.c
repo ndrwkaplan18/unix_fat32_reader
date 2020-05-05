@@ -36,9 +36,8 @@
 	#define ATTR_DIRECTORY 0x10
 	#define ATTR_ARCHIVE 0x20
 	#define ATTR_LONG_NAME 0x0F
-	#define ENTRY_DELETED 0xE5
+	#define ENTRY_DELETED 0x40
 	#define ENTRY_IS_LAST 0x00
-	#define ENTRY_INVALID 0x7F
 /********************************************************************************************/
 /* STRUCT DEFINITIONS */
 /********************************************************************************************/
@@ -91,9 +90,7 @@
 		void read_entry(entry_t *entry, unsigned char *buff, int index);
 		static unsigned int readLittleEnd(unsigned char *buffer, int index, int size);
 		void get_fullname(char *first, char *last, char *output);
-		void split_into_first_and_last(char *input, char *first, char *last);
 		void parse_filename_input(char *input, char *output);
-		int is_valid_attr(unsigned char attr);
 		char * get_file_attr_type(unsigned char attr);
 	/* STARTUP FUNCTIONS */
 		void open_img(char *filename);
@@ -122,7 +119,7 @@
 		while(True){
 			read_entry(entry, wd->sector, 32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
-			if(entry->attr == ENTRY_INVALID) continue;
+			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_HIDDEN || entry->attr & ATTR_SYSTEM || entry->attr & ATTR_LONG_NAME) continue;
 			fprintf(stdout, "%s\t", entry->full_name);
 		}
 		printf("\n");
@@ -143,7 +140,7 @@
 		while(True){
 			read_entry(entry, wd->sector,32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
-			if(entry->attr == ENTRY_INVALID) continue;
+			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME) continue;
 			if(!strncmp(input, entry->full_name, entry->full_len)){
 				if(!only_size) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x\n",entry->size, get_file_attr_type(entry->attr), entry->next_clust);
 				else fprintf(stdout, "Size is %d\n", entry->size);
@@ -181,8 +178,8 @@
 			entry->attr = ENTRY_IS_LAST;
 			return;
 		}
-		if(buff[index] == 0xE5 || !is_valid_attr(buff[index+11]) || buff[index+11] == ATTR_LONG_NAME){
-			entry->attr = ENTRY_INVALID;
+		if(buff[index] == 0xE5){
+			entry->attr = ENTRY_DELETED;
 			return;
 		}
 		int i, j;
@@ -229,16 +226,17 @@
 		fatinfo_t *fi = &fat_info;
 		unsigned int size = fi->BPB_FATSz32 * fi->BPB_BytsPerSec;
 		int length = size / sizeof(unsigned int), UIntsPerSec = fi->BPB_BytsPerSec / sizeof(unsigned int);
+		// Yes, read_sector() calls malloc as well. I need to initialize it here though to silence the compiler about sector not being initialized.
 		unsigned char * sector = malloc(fi->BPB_BytsPerSec);
 		int i, j = 0;
 		fi->FAT_table = (unsigned int *) malloc(size);
 		/* 
-		This is ugly, I know. I only want to have 1 sector in memory at a time so this monstrosity is the result.
-		If i = 0 or some multiple of UnsignedIntsPerSec, read in the next cluster. j tracks which cluster to add.
-		We determine which index to read the same way as determining which sector.
+		This is ugly, I know. I only want to have 1 sector in memory at a time so this monstrosity (beauty because it works) is the result.
+		If i = 0 or some multiple of UnsignedIntsPerSec, read in the next cluster. j tracks which cluster to read.
 		*/
 		for(i = 0; i < length; i++){
 			if(i % UIntsPerSec == 0){
+				free(sector);
 				sector = read_sector(fi->fat_offset + fi->BPB_BytsPerSec * j++);
 			}
 			fi->FAT_table[i] = readLittleEnd(sector, (i * 4) % fi->BPB_BytsPerSec, sizeof(unsigned int));
@@ -271,29 +269,6 @@
 		}
 	}
 
-	void split_into_first_and_last(char *input, char *first, char *last){
-		// Read input up to the period to be recorded in first
-		int i = 0, j;
-		while(input[i] != 0 && input[i] != 0x2E){
-			first[i] = input[i];
-			i++;
-		}
-		first[i] = 0;
-		// If the loop terminated because the null character was reached, there is no file extension
-		if(input[i] == 0){
-			last[0] = 0;
-		}
-		else{
-			i++;
-			j = 0;
-			while(input[i] != 0){
-				last[j++] = input[i];
-				i++;
-			}
-			last[j] = 0;
-		}
-	}
-
 	/**
 	 * Parse file/dir name argument when calling stat, size, cd, ls, mkdir, rmdir
 	 * @param input entire command including function call
@@ -315,42 +290,15 @@
 		output[i] = 0;
 	}
 
-	int is_valid_attr(unsigned char attr){
-			switch (attr)
-		{
-		case ATTR_READ_ONLY:
-		case ATTR_HIDDEN:
-		case ATTR_SYSTEM:
-		case ATTR_VOLUME_ID:
-		case ATTR_DIRECTORY:
-		case ATTR_ARCHIVE:
-		case ATTR_LONG_NAME:
-			return True;
-		default:
-			return False;
-			break;
-		}
-	}
-
 	char * get_file_attr_type(unsigned char attr){
-		switch (attr)
-		{
-		case ATTR_READ_ONLY:
-			return "ATTR_READ_ONLY";
-		case ATTR_HIDDEN:
-			return "ATTR_HIDDEN";
-		case ATTR_SYSTEM:
-			return "ATTR_SYSTEM";
-		case ATTR_VOLUME_ID:
-			return "ATTR_VOLUME_ID";
-		case ATTR_DIRECTORY:
-			return "ATTR_DIRECTORY";
-		case ATTR_ARCHIVE:
-			return "ATTR_ARCHIVE";
-		default:
-			return NULL;
-			break;
-		}
+		char * attrs = malloc(83); // Just allowing for maximum length of the return string
+		if(attr & ATTR_READ_ONLY)	strcat(attrs, "ATTR_READ_ONLY");
+		if(attr & ATTR_HIDDEN)		strcat(attrs, "ATTR_HIDDEN");
+		if(attr & ATTR_SYSTEM)		strcat(attrs, "ATTR_SYSTEM");
+		if(attr & ATTR_VOLUME_ID)	strcat(attrs, "ATTR_VOLUME_ID");
+		if(attr & ATTR_DIRECTORY)	strcat(attrs, "ATTR_DIRECTORY");
+		if(attr & ATTR_ARCHIVE)		strcat(attrs, "ATTR_ARCHIVE");
+		return attrs;
 	}
 /********************************************************************************************/
 /* STARTUP FUNCTIONS */
