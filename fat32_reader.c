@@ -236,32 +236,32 @@
 
 	unsigned char * read_cluster(off_t offset){
 		fatinfo_t *fi = &fat_info;
-		unsigned char *sector = malloc(sizeof(unsigned char) * fi->BPB_BytsPerSec * fi->BPB_SecPerClus);
+		unsigned char *cluster = malloc(sizeof(unsigned char) * fi->BPB_BytsPerSec * fi->BPB_SecPerClus);
 		lseek(fi->img_fd, offset, SEEK_SET);
-		if(read(fi->img_fd, sector, fi->BPB_BytsPerSec) < 0) fprintf(stderr, "failed to read file");
-		return sector;
+		if(read(fi->img_fd, cluster, fi->BPB_BytsPerSec) < 0) fprintf(stderr, "failed to read file");
+		return cluster;
 	}
 
 	void read_fat(){
 		fatinfo_t *fi = &fat_info;
 		unsigned int size = fi->BPB_FATSz32 * fi->BPB_BytsPerSec;
 		int length = size / sizeof(unsigned int), UIntsPerSec = fi->BPB_BytsPerSec / sizeof(unsigned int);
-		// Yes, read_sector() calls malloc as well. I need to initialize it here though to silence the compiler about sector not being initialized.
-		unsigned char * sector = malloc(fi->BPB_BytsPerSec);
+		// Yes, read_cluster() calls malloc as well. I need to initialize it here though to silence the compiler about cluster not being initialized.
+		unsigned char * cluster = malloc(fi->BPB_BytsPerSec);
 		int i, j = 0;
 		fi->FAT_table = (unsigned int *) malloc(size);
 		/* 
-		This is ugly, I know. I only want to have 1 sector in memory at a time so this monstrosity (beauty because it works) is the result.
+		This is ugly, I know. I only want to have 1 cluster in memory at a time so this monstrosity (beauty because it works) is the result.
 		If i = 0 or some multiple of UnsignedIntsPerSec, read in the next cluster. j tracks which cluster to read.
 		*/
 		for(i = 0; i < length; i++){
 			if(i % UIntsPerSec == 0){
-				free(sector);
-				sector = read_cluster(fi->fat_offset + fi->BPB_BytsPerSec * fi->BPB_SecPerClus * j++);
+				free(cluster);
+				cluster = read_cluster(fi->fat_offset + fi->BPB_BytsPerSec * fi->BPB_SecPerClus * j++);
 			}
-			fi->FAT_table[i] = readLittleEnd(sector, (i * 4) % fi->BPB_BytsPerSec, sizeof(unsigned int));
+			fi->FAT_table[i] = readLittleEnd(cluster, (i * 4) % (fi->BPB_BytsPerSec * fi->BPB_SecPerClus), sizeof(unsigned int));
 		}
-		free(sector);
+		free(cluster);
 	}
 
 	static unsigned int readLittleEnd(unsigned char *buffer, int index, int size){
