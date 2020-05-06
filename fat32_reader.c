@@ -23,6 +23,7 @@
 	#define True 1  /* C has no booleans! */
 	#define False 0
 	#define MAX_CMD 80
+	#define BOOT_SECTOR_MAX_BYTES 90
 	#define BPB_BytsPerSec_offset 11
 	#define BPB_SecPerClus_offset 13
 	#define BPB_RsvdSecCnt_offset 14
@@ -38,6 +39,12 @@
 	#define ATTR_LONG_NAME 0x0F
 	#define ENTRY_DELETED 0x40
 	#define ENTRY_IS_LAST 0x00
+	#define SHORT_NAME_FIRST_COMPONENT_MAX_LENGTH 9
+	#define SHORT_NAME_SECOND_COMPONENT_MAX_LENGTH 4
+	#define SHORT_NAME_FULL_NAME_MAX_LENGTH 13
+	#define SPACE 0x20
+	#define PERIOD 0x2E
+	#define NEWLINE 0xA
 /********************************************************************************************/
 /* STRUCT DEFINITIONS */
 /********************************************************************************************/
@@ -61,15 +68,15 @@
 
 	typedef struct {
 		off_t offset;
-		int size;
-		int next_clust;
+		unsigned int size;
+		unsigned int next_clust;
 		int first_len;
 		int last_len;
 		int full_len;
-		char first[9];
-		char last[4];
-		char full_name[13];
-		char attr;
+		char first[SHORT_NAME_FIRST_COMPONENT_MAX_LENGTH];
+		char last[SHORT_NAME_SECOND_COMPONENT_MAX_LENGTH];
+		char full_name[SHORT_NAME_FULL_NAME_MAX_LENGTH];
+		unsigned char attr;
 	} entry_t;
 /********************************************************************************************/
 /* GLOBAL DECLARATIONS */
@@ -171,7 +178,7 @@
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
 		int i = 0;
 		while(True){
-			read_entry(entry, wd->cluster,32 * i++);
+			read_entry(entry, wd->cluster, 32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME || !(entry->attr & ATTR_DIRECTORY)) continue;
 			if(!strncmp(input, entry->full_name, entry->full_len)){
@@ -204,11 +211,11 @@
 		}
 		int i, j;
 		// I can't guarantee there are no leftovers from a previous entry, so I need to zero out fullname every time :/
-		for(i = 0; i < 13; i++) entry->full_name[i] = 0;
+		for(i = 0; i < SHORT_NAME_FULL_NAME_MAX_LENGTH; i++) entry->full_name[i] = 0;
 		// Next two for loops copy the two components of name
 		// When 0x20 = " " is encountered, we have reached the end of this component
 		for(i = 0; i < 8; i++){
-			if(buff[index+i] == 0x20){
+			if(buff[index+i] == SPACE){
 				entry->first[i] = 0;
 				entry->first_len = i;
 				break;
@@ -217,7 +224,7 @@
 		}
 		j = 0;
 		for(i = 8; i < 11; i++){
-			if(buff[index+i] == 0x20){
+			if(buff[index+i] == SPACE){
 				entry->last[j] = 0;
 				entry->last_len = j;
 				break;
@@ -263,7 +270,7 @@
 			i++;
 		}
 		if(last[0] != 0){
-			output[i++] = 0x2E;
+			output[i++] = PERIOD;
 			while(last[j] != 0) output[i++] = last[j++];
 		}
 	}
@@ -274,14 +281,14 @@
 	 * @param output return value - parsed argument
 	*/
 	char * parse_filename_input(char *input, int cmd_len){
-		if(input[cmd_len] != 0x20){
+		if(input[cmd_len] != SPACE){
 			fprintf(stderr, "Error: unable to parse args\n");
 			return "";
 		}
-		char *output = malloc(13);
+		char *output = malloc(SHORT_NAME_FULL_NAME_MAX_LENGTH);
 		// every string will have a \n as its last character
 		int i = 0;
-		while(input[i+1+cmd_len] != 0xA){
+		while(input[i+1+cmd_len] != NEWLINE){
 			if(i > 11){
 				fprintf(stderr, "Error: file/directory name cannot exceed 12 characters\n");
 				return "";
@@ -312,9 +319,9 @@
 		fatinfo_t *fi = &fat_info;
 		pwd_t *wd = &pwd;
 		pwd_t *root = &root_dir;
-		unsigned char *boot_sector = malloc(sizeof(unsigned char) * 90);
+		unsigned char *boot_sector = malloc(BOOT_SECTOR_MAX_BYTES);
 		lseek(fi->img_fd, (off_t) 0, SEEK_SET);
-		if(read(fi->img_fd, boot_sector, 90) < 0) fprintf(stderr, "failed to read file");
+		if(read(fi->img_fd, boot_sector, BOOT_SECTOR_MAX_BYTES) < 0) fprintf(stderr, "failed to read file");
 		fi->BPB_BytsPerSec = readLittleEnd(boot_sector, BPB_BytsPerSec_offset, sizeof(fi->BPB_BytsPerSec));
 		fi->BPB_SecPerClus = readLittleEnd(boot_sector, BPB_SecPerClus_offset, sizeof(fi->BPB_SecPerClus));
 		fi->BPB_RsvdSecCnt = readLittleEnd(boot_sector, BPB_RsvdSecCnt_offset, sizeof(fi->BPB_RsvdSecCnt));
