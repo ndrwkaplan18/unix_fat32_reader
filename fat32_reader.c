@@ -56,8 +56,7 @@
 
 	typedef struct {
 		off_t offset;
-		off_t root_offset;
-		unsigned char *sector;
+		unsigned char *cluster;
 	} pwd_t;
 
 	typedef struct {
@@ -77,6 +76,7 @@
 /********************************************************************************************/
 	static fatinfo_t fat_info;
 	static pwd_t pwd;
+	static pwd_t root_dir;
 /********************************************************************************************/
 /* FUNCTION DECLARATIONS */
 /********************************************************************************************/
@@ -86,11 +86,13 @@
 		void display_stat(char *name, char only_size);
 		void display_size(char *name);
 		void display_volume();
+		void do_cd(char *dir_name);
 	/* HELPER FUNCTIONS */
 		void read_entry(entry_t *entry, unsigned char *buff, int index);
 		static unsigned int readLittleEnd(unsigned char *buffer, int index, int size);
+		unsigned char * read_cluster(off_t offset);
 		void get_fullname(char *first, char *last, char *output);
-		void parse_filename_input(char *input, char *output);
+		char * parse_filename_input(char *input, int cmd_len);
 		char * get_file_attr_type(unsigned char attr);
 	/* STARTUP FUNCTIONS */
 		void open_img(char *filename);
@@ -109,15 +111,16 @@
 		fprintf(stdout, "BPB_RootClus is 0x%x, %d\n", fi->BPB_RootClus, fi->BPB_RootClus);
 		fprintf(stdout, "FirstDataSector is %x, %d\n", fi->FirstDataSector, fi->FirstDataSector);
 		fprintf(stdout, "FatOffset is %lx, %ld\n", fi->fat_offset, fi->fat_offset);
-		fprintf(stdout, "RootOffset is %lx, %ld\n", pwd.root_offset, pwd.root_offset);
+		fprintf(stdout, "RootOffset is %lx, %ld\n", root_dir.offset, root_dir.offset);
+		fprintf(stdout, "pwd offset is %lx, %ld\n",pwd.offset, pwd.offset);
 	}
 
 	void display_ls(){
 		pwd_t *wd = &pwd;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		int i = 1;
+		int i = 0;
 		while(True){
-			read_entry(entry, wd->sector, 32 * i++);
+			read_entry(entry, wd->cluster, 32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_HIDDEN || entry->attr & ATTR_SYSTEM || entry->attr & ATTR_LONG_NAME) continue;
 			fprintf(stdout, "%s\t", entry->full_name);
@@ -127,22 +130,17 @@
 	}
 
 	void display_stat(char *name, char only_size){
-		if(name[4] != 0x20){ // Expected input "stat arg" so the space should be at index 4
-			fprintf(stderr, "Error: unable to parse args\n");
-			return;
-		}
-		char input[13];
-		parse_filename_input(name, input);
+		char *input = parse_filename_input(name, 4);
 
 		pwd_t *wd = &pwd;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
 		int i = 0;
 		while(True){
-			read_entry(entry, wd->sector,32 * i++);
+			read_entry(entry, wd->cluster,32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME) continue;
 			if(!strncmp(input, entry->full_name, entry->full_len)){
-				if(!only_size) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x\n",entry->size, get_file_attr_type(entry->attr), entry->next_clust);
+				if(!only_size) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x, %d\n",entry->size, get_file_attr_type(entry->attr), entry->next_clust, entry->next_clust);
 				else fprintf(stdout, "Size is %d\n", entry->size);
 				free(entry);
 				return;
@@ -158,10 +156,31 @@
 
 	void display_volume(){
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		pwd_t *wd = &pwd;
-		read_entry(entry, wd->sector, 0);
+		pwd_t *wd = &root_dir;
+		read_entry(entry, wd->cluster, 0);
 		if(entry->first_len > 0) fprintf(stdout, "%s%s\n",entry->first, entry->last);
 		else fprintf(stderr, "Error: volume name not found");
+		free(entry);
+	}
+
+	void do_cd(char *dir_name){
+		char *input = parse_filename_input(dir_name, 2);
+		pwd_t *wd = &pwd;
+		fatinfo_t *fi = &fat_info;
+		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
+		int i = 0;
+		while(True){
+			read_entry(entry, wd->cluster,32 * i++);
+			if(entry->attr == ENTRY_IS_LAST) break;
+			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME || !(entry->attr & ATTR_DIRECTORY)) continue;
+			if(!strncmp(input, entry->full_name, entry->full_len)){
+				wd->offset = (entry->next_clust + fi->FirstDataSector) * fi->BPB_BytsPerSec * fi->BPB_SecPerClus;
+				wd->cluster = read_cluster(wd->offset);
+				free(entry);
+				return;
+			}
+		}
+		fprintf(stderr, "Error: directory does not exist\n");
 		free(entry);
 	}
 /********************************************************************************************/
@@ -186,6 +205,7 @@
 		// I can't guarantee there are no leftovers from a previous entry, so I need to zero out fullname every time :/
 		for(i = 0; i < 13; i++) entry->full_name[i] = 0;
 		// Next two for loops copy the two components of name
+		// When 0x20 = " " is encountered, we have reached the end of this component
 		for(i = 0; i < 8; i++){
 			if(buff[index+i] == 0x20){
 				entry->first[i] = 0;
@@ -214,9 +234,9 @@
 		entry->next_clust = (hi << 16) | lo;
 	}
 
-	unsigned char * read_sector(off_t offset){
+	unsigned char * read_cluster(off_t offset){
 		fatinfo_t *fi = &fat_info;
-		unsigned char *sector = malloc(sizeof(unsigned char) * fi->BPB_BytsPerSec);
+		unsigned char *sector = malloc(sizeof(unsigned char) * fi->BPB_BytsPerSec * fi->BPB_SecPerClus);
 		lseek(fi->img_fd, offset, SEEK_SET);
 		if(read(fi->img_fd, sector, fi->BPB_BytsPerSec) < 0) fprintf(stderr, "failed to read file");
 		return sector;
@@ -237,7 +257,7 @@
 		for(i = 0; i < length; i++){
 			if(i % UIntsPerSec == 0){
 				free(sector);
-				sector = read_sector(fi->fat_offset + fi->BPB_BytsPerSec * j++);
+				sector = read_cluster(fi->fat_offset + fi->BPB_BytsPerSec * fi->BPB_SecPerClus * j++);
 			}
 			fi->FAT_table[i] = readLittleEnd(sector, (i * 4) % fi->BPB_BytsPerSec, sizeof(unsigned int));
 		}
@@ -274,20 +294,26 @@
 	 * @param input entire command including function call
 	 * @param output return value - parsed argument
 	*/
-	void parse_filename_input(char *input, char *output){
+	char * parse_filename_input(char *input, int cmd_len){
+		if(input[cmd_len] != 0x20){
+			fprintf(stderr, "Error: unable to parse args\n");
+			return "";
+		}
+		char *output = malloc(13);
 		// every string will have a \n as its last character
 		int i = 0;
-		while(input[i+5] != 0xA){
+		while(input[i+1+cmd_len] != 0xA){
 			if(i > 11){
 				fprintf(stderr, "Error: file/directory name cannot exceed 12 characters\n");
-				return;
+				return "";
 			}
-			output[i] = input[i+5];
+			output[i] = input[i+1+cmd_len];
 			// If lowercase, convert to uppercase
 			output[i] = toupper(output[i]);
 			i++;
 		}
 		output[i] = 0;
+		return output;
 	}
 
 	char * get_file_attr_type(unsigned char attr){
@@ -306,6 +332,7 @@
 	void parse_boot_sector(){
 		fatinfo_t *fi = &fat_info;
 		pwd_t *wd = &pwd;
+		pwd_t *root = &root_dir;
 		unsigned char *boot_sector = malloc(sizeof(unsigned char) * 90);
 		lseek(fi->img_fd, (off_t) 0, SEEK_SET);
 		if(read(fi->img_fd, boot_sector, 90) < 0) fprintf(stderr, "failed to read file");
@@ -318,9 +345,8 @@
 		fi->fat_offset = fi->BPB_RsvdSecCnt * fi->BPB_BytsPerSec;
 		fi->FirstDataSector = fi->BPB_RsvdSecCnt + fi->BPB_NumFATs * fi->BPB_FATSz32;
 		read_fat();
-		wd->offset = fi->FirstDataSector * fi->BPB_BytsPerSec;
-		wd->root_offset = wd->offset;
-		wd->sector = read_sector(fi->FirstDataSector * fi->BPB_BytsPerSec);
+		wd->offset = root->offset = fi->FirstDataSector * fi->BPB_BytsPerSec;
+		wd->cluster = root->cluster = read_cluster(fi->FirstDataSector * fi->BPB_BytsPerSec);
 	}
 
 	void open_img(char *filename){
@@ -372,7 +398,8 @@
 			}
 
 			else if(strncmp(cmd_line,"cd",2)==0) {
-				printf("Going to cd!\n");
+				// printf("Going to cd!\n");
+				do_cd(cmd_line);
 			}
 
 			else if(strncmp(cmd_line,"ls",2)==0) {
