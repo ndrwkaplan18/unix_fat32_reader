@@ -89,7 +89,7 @@
 		void do_cd(char *dir_name);
 	/* HELPER FUNCTIONS */
 		void read_entry(entry_t *entry, unsigned char *buff, int index);
-		static unsigned int readLittleEnd(unsigned char *buffer, int index, int size);
+		static unsigned int readLittleEnd(unsigned char *buff, int index, int size);
 		unsigned char * read_cluster(off_t offset);
 		void get_fullname(char *first, char *last, char *output);
 		char * parse_filename_input(char *input, int cmd_len);
@@ -234,11 +234,11 @@
 		entry->next_clust = (hi << 16) | lo;
 	}
 
-	static unsigned int readLittleEnd(unsigned char *buffer, int index, int size){
+	static unsigned int readLittleEnd(unsigned char *buff, int index, int size){
 		unsigned int ret, i;
-		ret = buffer[index];
+		ret = buff[index];
 		for(i = 1; i < size; i++){
-			ret += buffer[index + i] << (8 * i);
+			ret += buff[index + i] << (8 * i);
 		}
 		return ret;
 	}
