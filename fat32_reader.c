@@ -187,7 +187,7 @@
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME || !(entry->attr & ATTR_DIRECTORY)) continue;
 			if(!strncmp(input, entry->full_name, entry->full_len)){
-				wd->offset = ((entry->next_clust - fi->BPB_RootClus) * fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
+				wd->offset = (entry->next_clust == 0x0) ? root_dir.offset: ((entry->next_clust - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
 				free(wd->cluster); free(entry); free(input);
 				wd->cluster = read_cluster(wd->offset);
 				return;
