@@ -125,6 +125,7 @@
 		fprintf(stdout, "pwd offset is %lx, %ld\n",pwd.offset, pwd.offset);
 	}
 
+	//TODO - enable listing entries located beyond the pwd's starting cluster
 	void display_ls(){
 		pwd_t *wd = &pwd;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
@@ -175,6 +176,7 @@
 		free(entry);
 	}
 
+	//TODO - enable cd-ing into directories located beyond the pwd's starting cluster
 	void do_cd(char *dir_name){
 		char *input;
 		if((input = parse_filename_input(dir_name, 2)) == 0) return;
