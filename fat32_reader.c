@@ -100,11 +100,7 @@
 	/* MAIN FUNCTIONS */
 		void display_info();
 		void do_ls_cd_stat_size(char *name, unsigned int routine);
-		void display_ls();
-		void display_stat(char *name, char only_size);
-		void display_size(char *name);
 		void display_volume();
-		void do_cd(char *dir_name);
 	/* HELPER FUNCTIONS */
 		void read_entry(entry_t *entry, unsigned char *buff, int index);
 		static unsigned int readLittleEnd(unsigned char *buff, int index, int size);
@@ -145,6 +141,7 @@
 		fatinfo_t *fi = &fat_info;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
 		char *input = 0;
+		char success = False;
 		if((routine & STAT || routine & SIZE) && (input = parse_filename_input(name, 4)) == 0) return;
 		if(routine & CD && (input = parse_filename_input(name, 2)) == 0) return;
 		int i = 0, j = 0,
@@ -168,38 +165,28 @@
 				char * attrs = get_file_attr_type(entry->attr);
 				if(routine & STAT) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x, %d\n",entry->size, attrs, entry->next_clust, entry->next_clust);
 				else fprintf(stdout, "Size is %d\n", entry->size);
-				free(entry); free(input); free(attrs);
-				return;
+				free(input); free(attrs);
+				success = True;
+				break;
 			}
 			if(routine & CD && !strncmp(input, entry->full_name, entry->full_len)){
 				wd->offset = get_cluster_offset(entry->next_clust);
 				wd->first_clust_num = entry->next_clust;
-				free(wd->cluster); free(entry); free(input);
+				free(wd->cluster); free(input);
 				wd->cluster = read_cluster(wd->offset);
-				return;
+				success = True;
+				break;
 			}
 		}
-		// Make sure we're done to reset pwd cluster to first cluster.
+		// Make sure when we're done to reset pwd cluster to first cluster.
+		if(!success && !(routine & LS)) fprintf(stderr, "Error: file/directory does not exist\n");
+		else if(routine & LS) fprintf(stdout, "\n");
 		if(!(thisClus == wd->first_clust_num)){
 			free(wd->cluster);
 			next_clus_offset = get_cluster_offset(wd->first_clust_num);
 			wd->cluster = read_cluster(next_clus_offset);
 		}
-		printf("\n");
 		free(entry);
-	}
-
-	//TODO - enable listing entries located beyond the pwd's starting cluster
-	void display_ls(){
-		do_ls_cd_stat_size(0, LS);
-	}
-
-	void display_stat(char *name, char only_size){
-		do_ls_cd_stat_size(name, STAT);
-	}
-
-	void display_size(char *name){\
-		do_ls_cd_stat_size(name, SIZE);
 	}
 
 	void display_volume(){
@@ -209,10 +196,6 @@
 		if(entry->first_len > 0) fprintf(stdout, "%s%s\n",entry->first, entry->last);
 		else fprintf(stderr, "Error: volume name not found\n");
 		free(entry);
-	}
-
-	void do_cd(char *dir_name){
-		do_ls_cd_stat_size(dir_name, CD);
 	}
 /********************************************************************************************/
 /* HELPER FUNCTIONS */
@@ -427,12 +410,11 @@
 
 			else if(strncmp(cmd_line,"stat",4)==0){
 				// printf("Going to display stat.\n");
-				display_stat(cmd_line, False);
+				do_ls_cd_stat_size(cmd_line, STAT);
 			}
 			
 			else if(strncmp(cmd_line,"size",4)==0) {
-				// printf("Going to size!\n");
-				display_size(cmd_line);
+				do_ls_cd_stat_size(cmd_line, SIZE);
 			}
 
 			else if(strncmp(cmd_line,"volume",6)==0){
@@ -440,13 +422,11 @@
 			}
 
 			else if(strncmp(cmd_line,"cd",2)==0) {
-				// printf("Going to cd!\n");
-				do_cd(cmd_line);
+				do_ls_cd_stat_size(cmd_line, CD);
 			}
 
 			else if(strncmp(cmd_line,"ls",2)==0) {
-				// printf("Going to ls.\n");
-				display_ls();
+				do_ls_cd_stat_size(0, LS);
 			}
 
 			else if(strncmp(cmd_line,"read",4)==0) {
