@@ -53,6 +53,7 @@
 	#define CD 0x02
 	#define STAT 0x04
 	#define SIZE 0x08
+	#define READ 0x10
 /********************************************************************************************/
 /* STRUCT DEFINITIONS */
 /********************************************************************************************/
@@ -99,7 +100,7 @@
 /********************************************************************************************/
 	/* MAIN FUNCTIONS */
 		void display_info();
-		void do_ls_cd_stat_size(char *name, unsigned int routine);
+		void do_ls_cd_stat_size_read_read(char *name, unsigned int routine);
 		void display_volume();
 	/* HELPER FUNCTIONS */
 		void read_entry(entry_t *entry, unsigned char *buff, int index);
@@ -109,6 +110,7 @@
 		char * parse_filename_input(char *input, int cmd_len);
 		char * get_file_attr_type(unsigned char attr);
 		off_t get_cluster_offset(int clust_num);
+		void read_file(entry_t *entry, int position, int num_bytes);
 	/* STARTUP FUNCTIONS */
 		void open_img(char *filename);
 		void parse_boot_sector();
@@ -133,17 +135,18 @@
 
 	/** 
 	 * I realized that each of these functions have the same overall structure, with only slight variations.
-	 * Now we have 4 functions in one where the variations are accounted for using the
+	 * Now we have 5 functions in one where the variations are accounted for using the
 	 * @param routine - bitmask, where each routine is assigned a bit and associated with said bit by a symbolic constant bearing its name.
 	*/
-	void do_ls_cd_stat_size(char *name, unsigned int routine){
+	void do_ls_cd_stat_size_read(char *name, unsigned int routine){
 		pwd_t *wd = &pwd;
 		fatinfo_t *fi = &fat_info;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		char *input = 0;
-		char success = False;
-		if((routine & STAT || routine & SIZE) && (input = parse_filename_input(name, 4)) == 0) return;
+		char *input = 0, success = False;
+		unsigned long *position, *num_bytes; // need these if doing read
+		if((routine & STAT || routine & SIZE || routine & READ) && (input = parse_filename_input(name, 4)) == 0) return;
 		if(routine & CD && (input = parse_filename_input(name, 2)) == 0) return;
+		if(routine & READ) parse_pos_and_num_bytes(name, position, num_bytes);
 		int i = 0, j = 0,
 		entriesPerClus = (fi->BPB_BytsPerSec * fi->BPB_SecPerClus) / 32;
 		unsigned int thisClus = wd->first_clust_num;
@@ -176,6 +179,10 @@
 				wd->cluster = read_cluster(wd->offset);
 				success = True;
 				break;
+			}
+			if(routine & READ && !strncmp(input, entry->full_name, entry->full_len)){
+				read_file(entry, &position, &num_bytes);
+				success = True;
 			}
 		}
 		// Make sure when we're done to reset pwd cluster to first cluster.
@@ -310,6 +317,21 @@
 		return output;
 	}
 
+	void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes){
+		int i = 0, j = 0;
+		char *pos = malloc(11); // Maximum digits in a 16 bit int is 10
+		char *num = malloc(11);
+		while(input[i++] != SPACE);
+		while(input[i] != SPACE) pos[j++] = input[i++];
+		pos[j] = 0; j = 0; i++;
+		while(input[i] != NEWLINE) num[j++] = input[i++];
+		num[j] = 0;
+		*position = atoi(pos);
+		*num_bytes = atoi(num);
+		free(pos); free(num);
+	}
+
+
 	char * get_file_attr_type(unsigned char attr){
 		char * attrs = malloc(MAX_ATTR_LEN); // Just allowing for maximum length of the return string
 		if(attr & ATTR_READ_ONLY)	strcat(attrs, "ATTR_READ_ONLY");
@@ -324,6 +346,16 @@
 	off_t get_cluster_offset(int clust_num){
 		fatinfo_t *fi = &fat_info;
 		return (clust_num == 0x0) ? root_dir.offset: ((clust_num - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
+	}
+
+	void read_file(entry_t *entry, int position, int num_bytes){
+		/* 
+			if pos > clust size
+				try go to pos/clust size in the fat table
+			if there is an allocated cluster, read it in
+			fill a buff of size num_bytes + 1
+			print it out
+		*/
 	}
 /********************************************************************************************/
 /* STARTUP FUNCTIONS */
@@ -410,11 +442,11 @@
 
 			else if(strncmp(cmd_line,"stat",4)==0){
 				// printf("Going to display stat.\n");
-				do_ls_cd_stat_size(cmd_line, STAT);
+				do_ls_cd_stat_size_read(cmd_line, STAT);
 			}
 			
 			else if(strncmp(cmd_line,"size",4)==0) {
-				do_ls_cd_stat_size(cmd_line, SIZE);
+				do_ls_cd_stat_size_read(cmd_line, SIZE);
 			}
 
 			else if(strncmp(cmd_line,"volume",6)==0){
@@ -422,11 +454,11 @@
 			}
 
 			else if(strncmp(cmd_line,"cd",2)==0) {
-				do_ls_cd_stat_size(cmd_line, CD);
+				do_ls_cd_stat_size_read(cmd_line, CD);
 			}
 
 			else if(strncmp(cmd_line,"ls",2)==0) {
-				do_ls_cd_stat_size(0, LS);
+				do_ls_cd_stat_size_read(0, LS);
 			}
 
 			else if(strncmp(cmd_line,"read",4)==0) {
