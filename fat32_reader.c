@@ -46,6 +46,13 @@
 	#define PERIOD 0x2E
 	#define NEWLINE 0xA
 	#define MAX_ATTR_LEN 83
+	#define EOC 0x0FFFFFFF
+	#define EOC2 0x0FFFFFF8
+	#define BAD 0x0FFFFFF7
+	#define LS 0x01
+	#define CD 0x02
+	#define STAT 0x04
+	#define SIZE 0x08
 /********************************************************************************************/
 /* STRUCT DEFINITIONS */
 /********************************************************************************************/
@@ -65,6 +72,7 @@
 
 	typedef struct {
 		off_t offset;
+		int first_clust_num;
 		unsigned char *cluster;
 	} pwd_t;
 
@@ -91,6 +99,7 @@
 /********************************************************************************************/
 	/* MAIN FUNCTIONS */
 		void display_info();
+		void do_ls_cd_stat_size(char *name, unsigned int routine);
 		void display_ls();
 		void display_stat(char *name, char only_size);
 		void display_size(char *name);
@@ -103,6 +112,7 @@
 		void get_fullname(char *first, char *last, char *output);
 		char * parse_filename_input(char *input, int cmd_len);
 		char * get_file_attr_type(unsigned char attr);
+		off_t get_cluster_offset(int clust_num);
 	/* STARTUP FUNCTIONS */
 		void open_img(char *filename);
 		void parse_boot_sector();
@@ -125,46 +135,71 @@
 		fprintf(stdout, "pwd offset is %lx, %ld\n",pwd.offset, pwd.offset);
 	}
 
-	//TODO - enable listing entries located beyond the pwd's starting cluster
-	void display_ls(){
+	/** 
+	 * I realized that each of these functions have the same overall structure, with only slight variations.
+	 * Now we have 4 functions in one where the variations are accounted for using the
+	 * @param routine - bitmask, where each routine is assigned a bit and associated with said bit by a symbolic constant bearing its name.
+	*/
+	void do_ls_cd_stat_size(char *name, unsigned int routine){
 		pwd_t *wd = &pwd;
+		fatinfo_t *fi = &fat_info;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		int i = 0;
+		char *input = 0;
+		if((routine & STAT || routine & SIZE) && (input = parse_filename_input(name, 4)) == 0) return;
+		if(routine & CD && (input = parse_filename_input(name, 2)) == 0) return;
+		int i = 0, j = 0,
+		entriesPerClus = (fi->BPB_BytsPerSec * fi->BPB_SecPerClus) / 32;
+		unsigned int thisClus = wd->first_clust_num;
+		off_t next_clus_offset;
 		while(True){
+			if(j != 0 && j % entriesPerClus == 0){ // We only want to read in another cluster if we've reached the end of at least 1
+				thisClus = fi->FAT_table[thisClus];
+				if(thisClus == EOC || thisClus == EOC2 || thisClus == BAD) break;
+				free(wd->cluster);
+				next_clus_offset = get_cluster_offset(thisClus);
+				wd->cluster = read_cluster(next_clus_offset);
+				i = 0;
+			} j++;
 			read_entry(entry, wd->cluster, 32 * i++);
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_HIDDEN || entry->attr & ATTR_SYSTEM || entry->attr & ATTR_LONG_NAME) continue;
-			fprintf(stdout, "%s\t", entry->full_name);
+			if(routine & LS) fprintf(stdout, "%s\t", entry->full_name);
+			if((routine & STAT || routine & SIZE) && !strncmp(input, entry->full_name, entry->full_len)){
+				char * attrs = get_file_attr_type(entry->attr);
+				if(routine & STAT) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x, %d\n",entry->size, attrs, entry->next_clust, entry->next_clust);
+				else fprintf(stdout, "Size is %d\n", entry->size);
+				free(entry); free(input); free(attrs);
+				return;
+			}
+			if(routine & CD && !strncmp(input, entry->full_name, entry->full_len)){
+				wd->offset = get_cluster_offset(entry->next_clust);
+				wd->first_clust_num = entry->next_clust;
+				free(wd->cluster); free(entry); free(input);
+				wd->cluster = read_cluster(wd->offset);
+				return;
+			}
+		}
+		// Make sure we're done to reset pwd cluster to first cluster.
+		if(!(thisClus == wd->first_clust_num)){
+			free(wd->cluster);
+			next_clus_offset = get_cluster_offset(wd->first_clust_num);
+			wd->cluster = read_cluster(next_clus_offset);
 		}
 		printf("\n");
 		free(entry);
 	}
 
-	void display_stat(char *name, char only_size){
-		char *input;
-		if((input = parse_filename_input(name, 4)) == 0) return;
-
-		pwd_t *wd = &pwd;
-		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		int i = 0;
-		while(True){
-			read_entry(entry, wd->cluster,32 * i++);
-			if(entry->attr == ENTRY_IS_LAST) break;
-			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME) continue;
-			if(!strncmp(input, entry->full_name, entry->full_len)){
-				char * attrs = get_file_attr_type(entry->attr);
-				if(!only_size) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x, %d\n",entry->size, attrs, entry->next_clust, entry->next_clust);
-				else fprintf(stdout, "Size is %d\n", entry->size);
-				free(entry); free(input); free(attrs);
-				return;
-			}
-		}
-		fprintf(stderr, "Error: file/directory does not exist\n");
-		free(entry); free(input);
+	//TODO - enable listing entries located beyond the pwd's starting cluster
+	void display_ls(){
+		do_ls_cd_stat_size(0, LS);
 	}
 
-	void display_size(char *name){
-		display_stat(name, True);
+	void display_stat(char *name, char only_size){
+		do_ls_cd_stat_size(name, STAT);
+	}
+
+	void display_size(char *name){\
+		do_ls_cd_stat_size(name, SIZE);
 	}
 
 	void display_volume(){
@@ -176,27 +211,8 @@
 		free(entry);
 	}
 
-	//TODO - enable cd-ing into directories located beyond the pwd's starting cluster
 	void do_cd(char *dir_name){
-		char *input;
-		if((input = parse_filename_input(dir_name, 2)) == 0) return;
-		pwd_t *wd = &pwd;
-		fatinfo_t *fi = &fat_info;
-		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
-		int i = 0;
-		while(True){
-			read_entry(entry, wd->cluster, 32 * i++);
-			if(entry->attr == ENTRY_IS_LAST) break;
-			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME || !(entry->attr & ATTR_DIRECTORY)) continue;
-			if(!strncmp(input, entry->full_name, entry->full_len)){
-				wd->offset = (entry->next_clust == 0x0) ? root_dir.offset: ((entry->next_clust - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
-				free(wd->cluster); free(entry); free(input);
-				wd->cluster = read_cluster(wd->offset);
-				return;
-			}
-		}
-		fprintf(stderr, "Error: directory does not exist\n");
-		free(entry); free(input);
+		do_ls_cd_stat_size(dir_name, CD);
 	}
 /********************************************************************************************/
 /* HELPER FUNCTIONS */
@@ -321,6 +337,11 @@
 		if(attr & ATTR_ARCHIVE)		strcat(attrs, "ATTR_ARCHIVE");
 		return attrs;
 	}
+
+	off_t get_cluster_offset(int clust_num){
+		fatinfo_t *fi = &fat_info;
+		return (clust_num == 0x0) ? root_dir.offset: ((clust_num - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
+	}
 /********************************************************************************************/
 /* STARTUP FUNCTIONS */
 /********************************************************************************************/
@@ -341,6 +362,7 @@
 		fi->FirstDataSector = fi->BPB_RsvdSecCnt + fi->BPB_NumFATs * fi->BPB_FATSz32;
 		read_fat();
 		wd->offset = root->offset = fi->FirstDataSector * fi->BPB_BytsPerSec;
+		wd->first_clust_num = root->first_clust_num = fi->BPB_RootClus;
 		wd->cluster = read_cluster(fi->FirstDataSector * fi->BPB_BytsPerSec);
 		root->cluster = read_cluster(fi->FirstDataSector * fi->BPB_BytsPerSec);
 		free(boot_sector);
@@ -362,8 +384,8 @@
 
 	void read_fat(){
 		fatinfo_t *fi = &fat_info;
-		unsigned int size = fi->BPB_FATSz32 * fi->BPB_BytsPerSec;
-		int length = size / sizeof(unsigned int), UIntsPerSec = fi->BPB_BytsPerSec / sizeof(unsigned int);
+		unsigned int size = fi->BPB_FATSz32 * fi->BPB_BytsPerSec * fi->BPB_SecPerClus;
+		int length = size / sizeof(unsigned int), UIntsPerClus = (fi->BPB_BytsPerSec * fi->BPB_SecPerClus) / sizeof(unsigned int);
 		// dummy value here to silence the compiler. read_cluster() will do malloc for us.
 		unsigned char * cluster = 0;
 		int i, j = 0;
@@ -373,7 +395,7 @@
 		If i = 0 or some multiple of UnsignedIntsPerSec, read in the next cluster. j tracks which cluster to read.
 		*/
 		for(i = 0; i < length; i++){
-			if(i % UIntsPerSec == 0){
+			if(i % UIntsPerClus == 0){
 				free(cluster);
 				cluster = read_cluster(fi->fat_offset + fi->BPB_BytsPerSec * fi->BPB_SecPerClus * j++);
 			}
