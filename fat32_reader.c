@@ -123,6 +123,7 @@
 		unsigned int find_unallocated_clust(); // Line 513
 		unsigned char * make_entry(char *name, unsigned int clust); // Line 523
 		void update_fat(unsigned int clust, unsigned int next_clust); // Line 551
+		int check_if_dir_is_empty(unsigned int clust);
 	/* STARTUP FUNCTIONS */
 		void parse_boot_sector(); // Line 568
 		void open_img(char *filename); // Line 594
@@ -294,21 +295,17 @@
 			return;
 		}
 		fatinfo_t *fi = &fat_info;
-		off_t offset = get_cluster_offset(entry->next_clust);
-		unsigned char *cluster = read_cluster(offset);
-		if(cluster[FIRST_USER_DEFINED_ENTRY_SPACE_OFFSET] != ENTRY_IS_LAST){
+		if(!check_if_dir_is_empty(entry->next_clust)){
 			fprintf(stderr, "Error: specified directory is not empty\n");
-			free(cluster);
 			return;
 		}
 		fseek(fi->img_fp, entry_offset, SEEK_SET);
 		if(fputc(DELETE, fi->img_fp) == EOF){
 			fprintf(stderr, "Error writing directory deletion to disk.\n");
 		}
-		// If I remove the following line, rmdir doesn't work. I think the reason is because calling fseek forces the OS to write cached
-		// changes to disk?
+		update_fat(entry->next_clust, 0);
+		// If I remove the following line, rmdir doesn't work. I think the reason is because calling fseek forces the OS to write cached changes to disk?
 		fseek(fi->img_fp, entry_offset, SEEK_SET);
-		free(cluster);
 		return;
 	}
 
@@ -547,6 +544,7 @@
 	/** 
 	 * Updates the FAT table on disk at @param clust with value @param next_clust
 	 * Also manually updates the same value in the FAT table already in memory to prevent another disk access.
+	 * If next_clust is 0, recursively sets all pointers in chain starting at clust to 0
 	*/
 	void update_fat(unsigned int clust, unsigned int next_clust){
 		off_t fat_offset = fat_info.fat_offset + 4 * clust;
@@ -556,7 +554,36 @@
 		if(fwrite(buff, 1, 4, fat_info.img_fp) != 4){
 			fprintf(stderr, "Error updating FAT\n");
 		}
+		if(next_clust == 0 && fat_info.FAT_table[clust] != EOC && fat_info.FAT_table[clust] != EOC2 && fat_info.FAT_table[clust] != BAD) update_fat(fat_info.FAT_table[clust], 0);
 		fat_info.FAT_table[clust] = next_clust;
+	}
+
+	/** 
+	 * Scans directory starting at @param clust cluster to see if it has any valid entries.
+	 * If dir is empty @return 1
+	 * If dir is not empty @return 0
+	*/
+	int check_if_dir_is_empty(unsigned int clust){
+		fatinfo_t *fi = &fat_info;
+		off_t offset = get_cluster_offset(clust);
+		unsigned char *cluster = read_cluster(offset);
+		unsigned int clust_size = fi->BPB_BytsPerSec * fi->BPB_SecPerClus;
+		int clust_offset = FIRST_USER_DEFINED_ENTRY_SPACE_OFFSET, empty = True;
+		while(empty){
+			if(cluster[clust_offset] == 0) break;
+			else if(cluster[clust_offset] == 0xE5) clust_offset += 32;
+			else empty = False;
+			if(clust_offset == clust_size){
+				clust = fi->FAT_table[clust];
+				if(clust == EOC || clust == EOC2 || clust == BAD) break;
+				free(cluster);
+				offset = get_cluster_offset(clust);
+				cluster = read_cluster(offset);
+				clust_offset = 0;
+			}
+		}
+		free(cluster);
+		return empty;
 	}
 /********************************************************************************************/
 /* STARTUP FUNCTIONS */
