@@ -219,11 +219,12 @@
 		if(!success && !(routine & LS) && !(routine & MKDIR)){ fprintf(stderr, "Error: file/directory does not exist\n"); free(input);}
 		else if(routine & LS) fprintf(stdout, "\n");
 		else if(routine & MKDIR && success == False){ fprintf(stderr, "Error, no more space allocated in pwd to make directory.\n"); free(input);}
-		// Make sure when we're done to reset pwd cluster to first cluster. By doing this every time, we get a refresh in case anything was written to
-		// disk like in mkdir or rmdir
-		free(wd->cluster);
-		next_clus_offset = get_cluster_offset(wd->first_clust_num);
-		wd->cluster = read_cluster(next_clus_offset);
+		// Make sure when we're done to reset pwd cluster to first cluster.
+		if(!(thisClus == wd->first_clust_num) || routine & MKDIR || routine & RMDIR){
+			free(wd->cluster);
+			next_clus_offset = get_cluster_offset(wd->first_clust_num);
+			wd->cluster = read_cluster(next_clus_offset);
+		}
 	}
 
 	void display_volume(){
@@ -284,7 +285,6 @@
 
 	/** 
 	 * Set first byte of entry to 0xE5 (entry deleted) is entry is a directory and is empty.
-	 * If entry is in the first cluster of its parent DIR, changes show up after calling ls twice (not sure why)
 	 * @param entry - entry to be deleted
 	 * @param entry_offset - disk offset of entry to be deleted
 	*/
@@ -309,7 +309,7 @@
 	/** 
 	 * Search the FAT table for an unallocated cluster and assign that cluster
 	 * Write dir in that spot.
-	 * Go to the allocated cluster and make . & .. entries. Need to cd out and back in of pwd to see changes.
+	 * Go to the allocated cluster and make . & .. entries.
 	*/
 	void do_mkdir(char *dir_name, off_t entry_offset){
 		fatinfo_t *fi = &fat_info;
