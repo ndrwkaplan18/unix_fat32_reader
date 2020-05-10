@@ -215,7 +215,7 @@
 			}
 		}
 		free(entry);
-		if(!success && !(routine & LS) && !(routine & MKDIR)) fprintf(stderr, "Error: file/directory does not exist\n");
+		if(!success && !(routine & LS) && !(routine & MKDIR)){ fprintf(stderr, "Error: file/directory does not exist\n"); free(input);}
 		else if(routine & LS) fprintf(stdout, "\n");
 		else if(routine & MKDIR && success == False){ fprintf(stderr, "Error, no more space allocated in pwd to make directory.\n"); free(input);}
 		// Make sure when we're done to reset pwd cluster to first cluster.
