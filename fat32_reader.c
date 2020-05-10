@@ -371,7 +371,7 @@
 		int clust_num = position / (fi->BPB_BytsPerSec * fi->BPB_SecPerClus);
 		int clust_offset = position % (fi->BPB_BytsPerSec * fi->BPB_SecPerClus);
 		int i;
-		unsigned int thisClus = fi->FAT_table[entry->next_clust];
+		unsigned int thisClus = entry->next_clust;
 		unsigned char *cluster;
 		for(i = 1; i < clust_num; i++){
 			thisClus = fi->FAT_table[thisClus];
