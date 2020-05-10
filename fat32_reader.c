@@ -219,12 +219,11 @@
 		if(!success && !(routine & LS) && !(routine & MKDIR)){ fprintf(stderr, "Error: file/directory does not exist\n"); free(input);}
 		else if(routine & LS) fprintf(stdout, "\n");
 		else if(routine & MKDIR && success == False){ fprintf(stderr, "Error, no more space allocated in pwd to make directory.\n"); free(input);}
-		// Make sure when we're done to reset pwd cluster to first cluster.
-		if(!(thisClus == wd->first_clust_num)){
-			free(wd->cluster);
-			next_clus_offset = get_cluster_offset(wd->first_clust_num);
-			wd->cluster = read_cluster(next_clus_offset);
-		}
+		// Make sure when we're done to reset pwd cluster to first cluster. By doing this every time, we get a refresh in case anything was written to
+		// disk like in mkdir or rmdir
+		free(wd->cluster);
+		next_clus_offset = get_cluster_offset(wd->first_clust_num);
+		wd->cluster = read_cluster(next_clus_offset);
 	}
 
 	void display_volume(){
@@ -304,8 +303,6 @@
 			fprintf(stderr, "Error writing directory deletion to disk.\n");
 		}
 		update_fat(entry->next_clust, 0);
-		// If I remove the following line, rmdir doesn't work. I think the reason is because calling fseek forces the OS to write cached changes to disk?
-		fseek(fi->img_fp, entry_offset, SEEK_SET);
 		return;
 	}
 
