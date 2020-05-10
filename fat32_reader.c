@@ -124,8 +124,8 @@
 		unsigned char * make_entry(char *name, unsigned int clust);
 		void update_fat(unsigned int clust, unsigned int next_clust);
 	/* STARTUP FUNCTIONS */
-		void open_img(char *filename);
 		void parse_boot_sector();
+		void open_img(char *filename);
 		void read_fat();
 /********************************************************************************************/
 /* MAIN FUNCTIONS */
@@ -463,25 +463,6 @@
 		return output;
 	}
 
-	/**
-	 * Helper function for read. Given command line input, parses @param position and @param num_bytes
-	 * for the passed pointers to now point to.
-	 */
-	void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes){
-		int i = 0, j = 0;
-		char *pos = malloc(11); // Maximum digits in a 16 bit int is 10
-		char *num = malloc(11);
-		while(input[i++] != SPACE);
-		while(input[i++] != SPACE);
-		while(input[i] != SPACE) pos[j++] = input[i++];
-		pos[j] = 0; j = 0; i++;
-		while(input[i] != NEWLINE) num[j++] = input[i++];
-		num[j] = 0;
-		*position = atoi(pos);
-		*num_bytes = atoi(num);
-		free(pos); free(num);
-	}
-
 	/** 
 	 * Given @param attr, creates a string with the name of each activated attribute bit.
 	 * The caller must free() the return value.
@@ -504,6 +485,25 @@
 		fatinfo_t *fi = &fat_info;
 		return (clust_num == 0x0) ? root_dir.offset: ((clust_num - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
 	}
+
+	/**
+	 * Helper function for read. Given command line input, parses @param position and @param num_bytes
+	 * for the passed pointers to now point to.
+	 */
+	void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes){
+		int i = 0, j = 0;
+		char *pos = malloc(11); // Maximum digits in a 16 bit int is 10
+		char *num = malloc(11);
+		while(input[i++] != SPACE);
+		while(input[i++] != SPACE);
+		while(input[i] != SPACE) pos[j++] = input[i++];
+		pos[j] = 0; j = 0; i++;
+		while(input[i] != NEWLINE) num[j++] = input[i++];
+		num[j] = 0;
+		*position = atoi(pos);
+		*num_bytes = atoi(num);
+		free(pos); free(num);
+	}	
 
 	/**
 	 * Scans the FAT table for any unallocated clusters and returns the first one encountered.
