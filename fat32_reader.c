@@ -327,6 +327,7 @@
 		char *pos = malloc(11); // Maximum digits in a 16 bit int is 10
 		char *num = malloc(11);
 		while(input[i++] != SPACE);
+		while(input[i++] != SPACE);
 		while(input[i] != SPACE) pos[j++] = input[i++];
 		pos[j] = 0; j = 0; i++;
 		while(input[i] != NEWLINE) num[j++] = input[i++];
@@ -372,7 +373,7 @@
 		int i;
 		unsigned int thisClus = fi->FAT_table[entry->next_clust];
 		unsigned char *cluster;
-		for(i = 0; i < clust_num; i++){
+		for(i = 1; i < clust_num; i++){
 			thisClus = fi->FAT_table[thisClus];
 			if(thisClus == EOC || thisClus == EOC2 || thisClus == BAD){
 				fprintf(stderr, "Read error: file corrupted.\n");
