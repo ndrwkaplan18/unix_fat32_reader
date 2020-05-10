@@ -179,7 +179,7 @@
 			} j++;
 			this_clust_offset = 32 * i++;
 			read_entry(entry, wd->cluster, this_clust_offset);
-			if(routine & MKDIR && (entry->attr & ENTRY_IS_LAST || entry->attr & ENTRY_DELETED)){
+			if(routine & MKDIR && (entry->attr == ENTRY_IS_LAST || entry->attr & ENTRY_DELETED)){
 				do_mkdir(input, next_clus_offset + this_clust_offset);
 				END_LOOP:
 				free(input);
@@ -315,7 +315,7 @@
 	/** 
 	 * Search the FAT table for an unallocated cluster and assign that cluster
 	 * Write dir in that spot.
-	 * Go to the allocated cluster and make . & .. entries
+	 * Go to the allocated cluster and make . & .. entries. Need to cd out and back in of pwd to see changes.
 	*/
 	void do_mkdir(char *dir_name, off_t entry_offset){
 		fatinfo_t *fi = &fat_info;
