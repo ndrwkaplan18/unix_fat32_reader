@@ -104,32 +104,32 @@
 /* FUNCTION DECLARATIONS */
 /********************************************************************************************/
 	/* MAIN FUNCTIONS */
-		void display_info(); // Line 135
-		void do_ls_cd_stat_size_read_rmdir_mkdir(char *name, unsigned int routine); // Line 155
-		void display_volume(); // Line 229
-		void read_file(entry_t *entry, unsigned int position, unsigned int num_bytes); // Line 238
-		void do_rmdir(entry_t *entry, off_t entry_offset); // Line 291
-		void do_mkdir(char *dir_name, off_t entry_offset); // Line 320
+		void display_info();
+		void do_ls_cd_stat_size_read_rmdir_mkdir(char *name, unsigned int routine);
+		void display_volume();
+		void read_file(entry_t *entry, unsigned int position, unsigned int num_bytes);
+		void do_rmdir(entry_t *entry, off_t entry_offset);
+		void do_mkdir(char *dir_name, off_t entry_offset);
 	/* HELPER FUNCTIONS */
-		void read_entry(entry_t *entry, unsigned char *buff, int index); // Line 347
-		static unsigned int readLittleEnd(unsigned char *buff, int index, int size); // Line 392
-		void writeLittleEnd(unsigned char *out, unsigned int in, int size); // Line 404
-		unsigned char * read_cluster(off_t offset); // Line 415
-		void get_fullname(char *first, char *last, char *output); // Line 427
-		char * parse_filename_input(char *input, int cmd_len, char last_char); // Line 444
-		char * get_file_attr_type(unsigned char attr); // Line 472
-		off_t get_cluster_offset(int clust_num); // Line 486
-		void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes); // Line 495
-		unsigned int find_unallocated_clust(); // Line 513
-		unsigned char * make_entry(char *name, unsigned int clust); // Line 523
-		void update_fat(unsigned int clust, unsigned int next_clust); // Line 551
+		void read_entry(entry_t *entry, unsigned char *buff, int index);
+		static unsigned int readLittleEnd(unsigned char *buff, int index, int size);
+		void writeLittleEnd(unsigned char *out, unsigned int in, int size);
+		unsigned char * read_cluster(off_t offset);
+		void get_fullname(char *first, char *last, char *output);
+		char * parse_filename_input(char *input, int cmd_len, char last_char);
+		char * get_file_attr_type(unsigned char attr);
+		off_t get_cluster_offset(int clust_num);
+		void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes);
+		unsigned int find_unallocated_clust();
+		unsigned char * make_entry(char *name, unsigned int clust);
+		void update_fat(unsigned int clust, unsigned int next_clust);
 		int check_if_dir_is_empty(unsigned int clust);
 	/* STARTUP FUNCTIONS */
-		void parse_boot_sector(); // Line 568
-		void open_img(char *filename); // Line 594
-		void read_fat(); // Line 611
+		void parse_boot_sector();
+		void open_img(char *filename);
+		void read_fat();
 	/* MAIN */
-		int main(int argc, char *argv[]); // Line 635
+		int main(int argc, char *argv[]);
 /********************************************************************************************/
 /* MAIN FUNCTIONS */
 /********************************************************************************************/
@@ -554,7 +554,8 @@
 		if(fwrite(buff, 1, 4, fat_info.img_fp) != 4){
 			fprintf(stderr, "Error updating FAT\n");
 		}
-		if(next_clust == 0 && fat_info.FAT_table[clust] != EOC && fat_info.FAT_table[clust] != EOC2 && fat_info.FAT_table[clust] != BAD) update_fat(fat_info.FAT_table[clust], 0);
+		unsigned int ptr = fat_info.FAT_table[clust];
+		if(next_clust == 0 && ptr != EOC && ptr != EOC2 && ptr != BAD) update_fat(ptr, 0);
 		fat_info.FAT_table[clust] = next_clust;
 	}
 
