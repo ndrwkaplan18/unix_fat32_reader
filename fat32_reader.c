@@ -104,29 +104,31 @@
 /* FUNCTION DECLARATIONS */
 /********************************************************************************************/
 	/* MAIN FUNCTIONS */
-		void display_info();
-		void do_ls_cd_stat_size_read_rmdir_mkdir(char *name, unsigned int routine);
-		void display_volume();
-		void read_file(entry_t *entry, unsigned int position, unsigned int num_bytes);
-		void do_rmdir(entry_t *entry, off_t entry_offset);
-		void do_mkdir(char *dir_name, off_t entry_offset);
+		void display_info(); // Line 
+		void do_ls_cd_stat_size_read_rmdir_mkdir(char *name, unsigned int routine); // Line
+		void display_volume(); // Line
+		void read_file(entry_t *entry, unsigned int position, unsigned int num_bytes); // Line
+		void do_rmdir(entry_t *entry, off_t entry_offset); // Line
+		void do_mkdir(char *dir_name, off_t entry_offset); // Line
 	/* HELPER FUNCTIONS */
-		void read_entry(entry_t *entry, unsigned char *buff, int index);
-		static unsigned int readLittleEnd(unsigned char *buff, int index, int size);
-		void writeLittleEnd(unsigned char *out, unsigned int in, int size);
-		unsigned char * read_cluster(off_t offset);
-		void get_fullname(char *first, char *last, char *output);
-		char * parse_filename_input(char *input, int cmd_len, char last_char);
-		char * get_file_attr_type(unsigned char attr);
-		off_t get_cluster_offset(int clust_num);
-		void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes);
-		unsigned int find_unallocated_clust();
-		unsigned char * make_entry(char *name, unsigned int clust);
-		void update_fat(unsigned int clust, unsigned int next_clust);
+		void read_entry(entry_t *entry, unsigned char *buff, int index); // Line
+		static unsigned int readLittleEnd(unsigned char *buff, int index, int size); // Line
+		void writeLittleEnd(unsigned char *out, unsigned int in, int size); // Line
+		unsigned char * read_cluster(off_t offset); // Line
+		void get_fullname(char *first, char *last, char *output); // Line
+		char * parse_filename_input(char *input, int cmd_len, char last_char); // Line
+		char * get_file_attr_type(unsigned char attr); // Line
+		off_t get_cluster_offset(int clust_num); // Line
+		void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes); // Line
+		unsigned int find_unallocated_clust(); // Line
+		unsigned char * make_entry(char *name, unsigned int clust); // Line
+		void update_fat(unsigned int clust, unsigned int next_clust); // Line
 	/* STARTUP FUNCTIONS */
-		void parse_boot_sector();
-		void open_img(char *filename);
-		void read_fat();
+		void parse_boot_sector(); // Line
+		void open_img(char *filename); // Line
+		void read_fat(); // Line
+	/* MAIN */
+		int main(int argc, char *argv[]); // Line
 /********************************************************************************************/
 /* MAIN FUNCTIONS */
 /********************************************************************************************/
