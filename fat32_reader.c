@@ -39,6 +39,7 @@
 	#define ATTR_LONG_NAME 0x0F
 	#define ENTRY_DELETED 0x40
 	#define ENTRY_IS_LAST 0x00
+	#define DELETE 0xE5
 	#define SHORT_NAME_FIRST_MAX_LENGTH 9
 	#define SHORT_NAME_SECOND_MAX_LENGTH 4
 	#define SHORT_NAME_FULL_MAX_LENGTH 13
@@ -55,7 +56,10 @@
 	#define SIZE 0x08
 	#define READ 0x10
 	#define RMDIR 0x20
+	#define MKDIR 0x40
 	#define FIRST_USER_DEFINED_ENTRY_SPACE_OFFSET 64
+	#define HI_MASK 0xFFFF0000U
+	#define LO_MASK 0x0000FFFFU
 /********************************************************************************************/
 /* STRUCT DEFINITIONS */
 /********************************************************************************************/
@@ -75,7 +79,7 @@
 
 	typedef struct {
 		off_t offset;
-		int first_clust_num;
+		unsigned int first_clust_num;
 		unsigned char *cluster;
 	} pwd_t;
 
@@ -101,19 +105,24 @@
 /********************************************************************************************/
 	/* MAIN FUNCTIONS */
 		void display_info();
-		void do_ls_cd_stat_size_read_rmdir(char *name, unsigned int routine);
+		void do_ls_cd_stat_size_read_rmdir_mkdir(char *name, unsigned int routine);
 		void display_volume();
 		void read_file(entry_t *entry, unsigned int position, unsigned int num_bytes);
 		void do_rmdir(entry_t *entry, off_t entry_offset);
+		void do_mkdir(char *dir_name, off_t entry_offset);
 	/* HELPER FUNCTIONS */
 		void read_entry(entry_t *entry, unsigned char *buff, int index);
 		static unsigned int readLittleEnd(unsigned char *buff, int index, int size);
+		void writeLittleEnd(unsigned char *out, unsigned int in, int size);
 		unsigned char * read_cluster(off_t offset);
 		void get_fullname(char *first, char *last, char *output);
 		char * parse_filename_input(char *input, int cmd_len, char last_char);
 		char * get_file_attr_type(unsigned char attr);
 		off_t get_cluster_offset(int clust_num);
 		void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes);
+		unsigned int find_unallocated_clust();
+		unsigned char * make_entry(char *name, unsigned int clust);
+		void update_fat(unsigned int clust, unsigned int next_clust);
 	/* STARTUP FUNCTIONS */
 		void open_img(char *filename);
 		void parse_boot_sector();
@@ -129,11 +138,11 @@
 		fprintf(stdout, "BPB_NumFATs is 0x%x, %d\n", fi->BPB_NumFATs, fi->BPB_NumFATs);
 		fprintf(stdout, "BPB_FATSz32 is 0x%x, %d\n", fi->BPB_FATSz32, fi->BPB_FATSz32);
 		// debugging fprintfs
-		fprintf(stdout, "BPB_RootClus is 0x%x, %d\n", fi->BPB_RootClus, fi->BPB_RootClus);
-		fprintf(stdout, "FirstDataSector is %x, %d\n", fi->FirstDataSector, fi->FirstDataSector);
-		fprintf(stdout, "FatOffset is %lx, %ld\n", fi->fat_offset, fi->fat_offset);
-		fprintf(stdout, "RootOffset is %lx, %ld\n", root_dir.offset, root_dir.offset);
-		fprintf(stdout, "pwd offset is %lx, %ld\n",pwd.offset, pwd.offset);
+		// fprintf(stdout, "BPB_RootClus is 0x%x, %d\n", fi->BPB_RootClus, fi->BPB_RootClus);
+		// fprintf(stdout, "FirstDataSector is %x, %d\n", fi->FirstDataSector, fi->FirstDataSector);
+		// fprintf(stdout, "FatOffset is %lx, %ld\n", fi->fat_offset, fi->fat_offset);
+		// fprintf(stdout, "RootOffset is %lx, %ld\n", root_dir.offset, root_dir.offset);
+		// fprintf(stdout, "pwd offset is %lx, %ld\n",pwd.offset, pwd.offset);
 	}
 
 	/** 
@@ -141,18 +150,18 @@
 	 * Now we have 6 functions in one where the variations are accounted for using the
 	 * @param routine - bitmask, where each routine is assigned a bit and associated with said bit by a symbolic constant bearing its name.
 	*/
-	void do_ls_cd_stat_size_read_rmdir(char *name, unsigned int routine){
+	void do_ls_cd_stat_size_read_rmdir_mkdir(char *name, unsigned int routine){
 		pwd_t *wd = &pwd;
 		fatinfo_t *fi = &fat_info;
 		entry_t *entry = (entry_t*) malloc(sizeof(entry_t));
 		char *input = 0, success = False;
 		unsigned int position, num_bytes; // need these if doing read
-		position = num_bytes = 0;
+		position = num_bytes = 0; // silence the compiler
 		if((routine & STAT || routine & SIZE) && (input = parse_filename_input(name, 4, NEWLINE)) == 0) return;
 		if(routine & CD && (input = parse_filename_input(name, 2, NEWLINE)) == 0) return;
-		if(routine & RMDIR && (input = parse_filename_input(name, 5, NEWLINE)) == 0) return;
+		if((routine & RMDIR || routine & MKDIR) && (input = parse_filename_input(name, 5, NEWLINE)) == 0) return;
 		if(routine & READ && (input = parse_filename_input(name, 4, SPACE)) == 0) return;
-		else if(routine & READ) parse_pos_and_num_bytes(name, &position, &num_bytes);
+		if(routine & READ) parse_pos_and_num_bytes(name, &position, &num_bytes);
 		int i = 0, j = 0, this_clust_offset,
 		entriesPerClus = (fi->BPB_BytsPerSec * fi->BPB_SecPerClus) / 32;
 		unsigned int thisClus = wd->first_clust_num;
@@ -168,6 +177,13 @@
 			} j++;
 			this_clust_offset = 32 * i++;
 			read_entry(entry, wd->cluster, this_clust_offset);
+			if(routine & MKDIR && (entry->attr & ENTRY_IS_LAST || entry->attr & ENTRY_DELETED)){
+				do_mkdir(input, next_clus_offset + this_clust_offset);
+				END_LOOP:
+				free(input);
+				success = True;
+				break;
+			}
 			if(entry->attr == ENTRY_IS_LAST) break;
 			if(entry->attr & ENTRY_DELETED || entry->attr & ATTR_LONG_NAME) continue;
 			if(routine & LS && !(entry->attr & ATTR_HIDDEN) && !(entry->attr & ATTR_SYSTEM)){
@@ -177,34 +193,29 @@
 				char * attrs = get_file_attr_type(entry->attr);
 				if(routine & STAT) fprintf(stdout, "Size is %d\nAttributes %s\nNext cluster number is 0x%x, %d\n",entry->size, attrs, entry->next_clust, entry->next_clust);
 				else fprintf(stdout, "Size is %d\n", entry->size);
-				free(input); free(attrs);
-				success = True;
-				break;
+				free(attrs);
+				goto END_LOOP;
 			}
 			if(routine & CD && !strncmp(input, entry->full_name, entry->full_len)){
 				wd->offset = get_cluster_offset(entry->next_clust);
 				wd->first_clust_num = entry->next_clust;
-				free(wd->cluster); free(input);
+				free(wd->cluster);
 				wd->cluster = read_cluster(wd->offset);
-				success = True;
-				break;
+				goto END_LOOP;
 			}
 			if(routine & READ && !strncmp(input, entry->full_name, entry->full_len)){
 				read_file(entry, position, num_bytes);
-				free(input);
-				success = True;
-				break;
+				goto END_LOOP;
 			}
 			if(routine & RMDIR && !strncmp(input, entry->full_name, entry->full_len)){
 				do_rmdir(entry, next_clus_offset + this_clust_offset);
-				free(input);
-				success = True;
-				break;
+				goto END_LOOP;
 			}
 		}
 		free(entry);
-		if(!success && !(routine & LS)) fprintf(stderr, "Error: file/directory does not exist\n");
+		if(!success && !(routine & LS) && !(routine & MKDIR)) fprintf(stderr, "Error: file/directory does not exist\n");
 		else if(routine & LS) fprintf(stdout, "\n");
+		else if(routine & MKDIR && success == False) fprintf(stderr, "Error, no more space allocated in pwd to make directory.\n");
 		// Make sure when we're done to reset pwd cluster to first cluster.
 		if(!(thisClus == wd->first_clust_num)){
 			free(wd->cluster);
@@ -269,12 +280,18 @@
 		free(output); free(cluster);
 	}
 
+	/** 
+	 * Set first byte of entry to 0xE5 (entry deleted) is entry is a directory and is empty.
+	 * If entry is in the first cluster of its parent DIR, changes show up after calling ls twice (not sure why)
+	 * @param entry - entry to be deleted
+	 * @param entry_offset - disk offset of entry to be deleted
+	*/
 	void do_rmdir(entry_t *entry, off_t entry_offset){
 		if(!(entry->attr & ATTR_DIRECTORY)){
 			fprintf(stderr, "Specified file is not a directory\n");
 			return;
 		}
-
+		fatinfo_t *fi = &fat_info;
 		off_t offset = get_cluster_offset(entry->next_clust);
 		unsigned char *cluster = read_cluster(offset);
 		if(cluster[FIRST_USER_DEFINED_ENTRY_SPACE_OFFSET] != ENTRY_IS_LAST){
@@ -282,12 +299,38 @@
 			free(cluster);
 			return;
 		}
-		fseek(fat_info.img_fp, entry_offset, SEEK_SET);
-		if(fputc(ENTRY_DELETED, fat_info.img_fp) == EOF){
+		fseek(fi->img_fp, entry_offset, SEEK_SET);
+		if(fputc(DELETE, fi->img_fp) == EOF){
 			fprintf(stderr, "Error writing directory deletion to disk.\n");
 		}
+		// If I remove the following line, rmdir doesn't work. I think the reason is because calling fseek forces the OS to write cached
+		// changes to disk?
+		fseek(fi->img_fp, entry_offset, SEEK_SET);
 		free(cluster);
 		return;
+	}
+
+	/** 
+	 * Search the FAT table for an unallocated cluster and assign that cluster
+	 * Write dir in that spot.
+	 * Go to the allocated cluster and make . & .. entries
+	*/
+	void do_mkdir(char *dir_name, off_t entry_offset){
+		fatinfo_t *fi = &fat_info;
+		pwd_t *wd = &pwd;
+		unsigned int clust = find_unallocated_clust();
+		unsigned char *new_entry = make_entry(dir_name, clust);
+		unsigned char *dot = make_entry(".", clust);
+		unsigned char *dotdot = make_entry("..", wd->first_clust_num);
+		off_t new_entry_offset = get_cluster_offset(clust);
+		fseek(fi->img_fp, entry_offset, SEEK_SET);
+		fwrite(new_entry, 1, 32, fi->img_fp);
+		fseek(fi->img_fp, new_entry_offset, SEEK_SET);
+		fwrite(dot, 1, 32, fi->img_fp);
+		fwrite(dotdot, 1, 32, fi->img_fp);
+		update_fat(clust, EOC);
+		fseek(fi->img_fp, wd->offset, SEEK_SET);
+		free(new_entry); free(dot); free(dotdot);
 	}
 /********************************************************************************************/
 /* HELPER FUNCTIONS */
@@ -347,6 +390,17 @@
 			ret += buff[index + i] << (8 * i);
 		}
 		return ret;
+	}
+
+	/** 
+	 * Writes @param size bytes of @param in to buffer @param out in little endian.
+	*/
+	void writeLittleEnd(unsigned char *out, unsigned int in, int size){
+		int i;
+		for(i = 0; i < size; i++){
+			out[i] = in & 0xFFU;
+			in = in >> 8;
+		}
 	}
 
 	unsigned char * read_cluster(off_t offset){
@@ -433,6 +487,50 @@
 		fatinfo_t *fi = &fat_info;
 		return (clust_num == 0x0) ? root_dir.offset: ((clust_num - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
 	}
+
+	unsigned int find_unallocated_clust(){
+		fatinfo_t *fi = &fat_info;
+		unsigned int i = 0;
+		while(fi->FAT_table[i] != 0) i++;
+		return i;
+	}
+
+	/** 
+	 * Assumes entry to be made is a directory because the only entry that this program can make is a directory
+	*/
+	unsigned char * make_entry(char *name, unsigned int clust){
+		unsigned char *entry = malloc(32);
+		unsigned short hi = (clust & HI_MASK) >> 16;
+		unsigned short lo = clust & LO_MASK;
+		int i = 0;
+		while(name[i] != 0){
+			entry[i] = name[i];
+			i++;
+
+		}
+		while(i < 11){
+			entry[i] = SPACE;
+			i++;
+		}
+		entry[i] = ATTR_DIRECTORY;
+		writeLittleEnd((entry+20), hi, 2);
+		writeLittleEnd((entry+26), lo, 2);
+		i = 28;
+		while(i < 32){
+			entry[i++] = 0;
+		}
+		return entry;
+	}
+
+	void update_fat(unsigned int clust, unsigned int next_clust){
+		off_t fat_offset = fat_info.fat_offset + 4 * clust;
+		unsigned char buff[4];
+		writeLittleEnd(buff, next_clust, 4);
+		fseek(fat_info.img_fp, fat_offset, SEEK_SET);
+		if(fwrite(buff, 1, 4, fat_info.img_fp) != 4){
+			fprintf(stderr, "Error updating FAT\n");
+		}
+	}
 /********************************************************************************************/
 /* STARTUP FUNCTIONS */
 /********************************************************************************************/
@@ -463,7 +561,7 @@
 		fatinfo_t *fi = &fat_info;
 		FILE *fp;
 		int fd;
-		fp = fopen(filename, "r+"); //TODO set to write privileges
+		fp = fopen(filename, "r+b"); //TODO set to write privileges
 		if(fp == NULL){
 			fprintf(stderr, "img file not opened\n");
 			exit(EXIT_FAILURE);
@@ -516,11 +614,11 @@
 			}
 
 			else if(strncmp(cmd_line,"stat",4)==0){
-				do_ls_cd_stat_size_read_rmdir(cmd_line, STAT);
+				do_ls_cd_stat_size_read_rmdir_mkdir(cmd_line, STAT);
 			}
 			
 			else if(strncmp(cmd_line,"size",4)==0) {
-				do_ls_cd_stat_size_read_rmdir(cmd_line, SIZE);
+				do_ls_cd_stat_size_read_rmdir_mkdir(cmd_line, SIZE);
 			}
 
 			else if(strncmp(cmd_line,"volume",6)==0){
@@ -528,23 +626,23 @@
 			}
 
 			else if(strncmp(cmd_line,"cd",2)==0) {
-				do_ls_cd_stat_size_read_rmdir(cmd_line, CD);
+				do_ls_cd_stat_size_read_rmdir_mkdir(cmd_line, CD);
 			}
 
 			else if(strncmp(cmd_line,"ls",2)==0) {
-				do_ls_cd_stat_size_read_rmdir(0, LS);
+				do_ls_cd_stat_size_read_rmdir_mkdir(0, LS);
 			}
 
 			else if(strncmp(cmd_line,"read",4)==0) {
-				do_ls_cd_stat_size_read_rmdir(cmd_line, READ);
+				do_ls_cd_stat_size_read_rmdir_mkdir(cmd_line, READ);
 			}
 
 			else if(strncmp(cmd_line,"mkdir",5)==0){
-
+				do_ls_cd_stat_size_read_rmdir_mkdir(cmd_line, MKDIR);
 			}
 
 			else if(strncmp(cmd_line,"rmdir",5)==0){
-				do_ls_cd_stat_size_read_rmdir(cmd_line, RMDIR);
+				do_ls_cd_stat_size_read_rmdir_mkdir(cmd_line, RMDIR);
 			}
 			
 			else if(strncmp(cmd_line,"quit",4)==0) {
