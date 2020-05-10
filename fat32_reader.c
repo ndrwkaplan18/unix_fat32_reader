@@ -335,6 +335,7 @@
 /********************************************************************************************/
 /* HELPER FUNCTIONS */
 /********************************************************************************************/
+
 	/** 
 	 * Reads the contents of a directory entry and populates a struct of type entry_t
 	 * If the entry is the last one in a directory or is otherwise invalid, only the attr
@@ -383,6 +384,9 @@
 		entry->next_clust = (hi << 16) | lo;
 	}
 
+	/** 
+	 * Reads buffer starting at index total size bytes in little endian.
+	*/
 	static unsigned int readLittleEnd(unsigned char *buff, int index, int size){
 		unsigned int ret, i;
 		ret = buff[index];
@@ -403,6 +407,9 @@
 		}
 	}
 
+	/** 
+	 * Reads cluster at @param offset on disk and returns a byte array of Cluster Size
+	*/
 	unsigned char * read_cluster(off_t offset){
 		fatinfo_t *fi = &fat_info;
 		unsigned char *cluster = (unsigned char *) malloc(fi->BPB_BytsPerSec * fi->BPB_SecPerClus);
@@ -456,6 +463,10 @@
 		return output;
 	}
 
+	/**
+	 * Helper function for read. Given command line input, parses @param position and @param num_bytes
+	 * for the passed pointers to now point to.
+	 */
 	void parse_pos_and_num_bytes(char *input, unsigned int *position, unsigned int *num_bytes){
 		int i = 0, j = 0;
 		char *pos = malloc(11); // Maximum digits in a 16 bit int is 10
@@ -471,7 +482,10 @@
 		free(pos); free(num);
 	}
 
-
+	/** 
+	 * Given @param attr, creates a string with the name of each activated attribute bit.
+	 * The caller must free() the return value.
+	*/
 	char * get_file_attr_type(unsigned char attr){
 		char * attrs = malloc(MAX_ATTR_LEN); // Just allowing for maximum length of the return string
 		if(attr & ATTR_READ_ONLY)	strcat(attrs, "ATTR_READ_ONLY");
@@ -483,11 +497,17 @@
 		return attrs;
 	}
 
+	/** 
+	 * Given a cluster number, returns the disk offset where that cluster begins.
+	*/
 	off_t get_cluster_offset(int clust_num){
 		fatinfo_t *fi = &fat_info;
 		return (clust_num == 0x0) ? root_dir.offset: ((clust_num - fi->BPB_RootClus)* fi->BPB_SecPerClus + fi->FirstDataSector) * fi->BPB_BytsPerSec;
 	}
 
+	/**
+	 * Scans the FAT table for any unallocated clusters and returns the first one encountered.
+	*/
 	unsigned int find_unallocated_clust(){
 		fatinfo_t *fi = &fat_info;
 		unsigned int i = 0;
@@ -522,6 +542,10 @@
 		return entry;
 	}
 
+	/** 
+	 * Updates the FAT table on disk at @param clust with value @param next_clust
+	 * Also manually updates the same value in the FAT table already in memory to prevent another disk access.
+	*/
 	void update_fat(unsigned int clust, unsigned int next_clust){
 		off_t fat_offset = fat_info.fat_offset + 4 * clust;
 		unsigned char buff[4];
@@ -530,10 +554,15 @@
 		if(fwrite(buff, 1, 4, fat_info.img_fp) != 4){
 			fprintf(stderr, "Error updating FAT\n");
 		}
+		fat_info.FAT_table[clust] = next_clust;
 	}
 /********************************************************************************************/
 /* STARTUP FUNCTIONS */
 /********************************************************************************************/
+
+	/** 
+	 * On startup, parses the boot sector to fill global structs fat_info, pwd, and root_dir.
+	*/
 	void parse_boot_sector(){
 		fatinfo_t *fi = &fat_info;
 		pwd_t *wd = &pwd;
@@ -557,6 +586,9 @@
 		free(boot_sector);
 	}
 
+	/** 
+	 * Opens file with read and write privileges and passes the file pointer and file descriptor to the fat_info struct.
+	*/
 	void open_img(char *filename){
 		fatinfo_t *fi = &fat_info;
 		FILE *fp;
@@ -571,6 +603,9 @@
 		fi->img_fd = fd;
 	}
 
+	/** 
+	 * Reads the FAT table into memory
+	*/
 	void read_fat(){
 		fatinfo_t *fi = &fat_info;
 		unsigned int size = fi->BPB_FATSz32 * fi->BPB_BytsPerSec * fi->BPB_SecPerClus;
